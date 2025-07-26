@@ -80,3 +80,93 @@ if uploaded_file:
                 st.write(", ".join(map(str, bonus_hot)))
 
             freq_df = pd.DataFrame({"Numéro": list(range(1, 50))})
+            freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
+
+            fig = px.bar(
+                freq_df,
+                x="Numéro",
+                y="Fréquence",
+                title="Fréquence des numéros (tous les tirages importés)",
+                labels={"Numéro": "Numéro", "Fréquence": "Nombre d'apparitions"},
+                color="Fréquence",
+                color_continuous_scale="Blues",
+            )
+            fig.update_layout(template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
+
+            hot_df = freq_df[freq_df["Numéro"].isin(hot)]
+            cold_df = freq_df[freq_df["Numéro"].isin(cold)]
+
+            fig2 = go.Figure()
+            fig2.add_trace(go.Bar(x=hot_df["Numéro"], y=hot_df["Fréquence"], name="Numéros chauds", marker_color="red"))
+            fig2.add_trace(go.Bar(x=cold_df["Numéro"], y=cold_df["Fréquence"], name="Numéros froids", marker_color="blue"))
+            fig2.update_layout(
+                barmode="group",
+                title="Comparaison Numéros chauds vs froids",
+                xaxis_title="Numéro",
+                yaxis_title="Fréquence",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+            pair_counts = Counter()
+            for _, row in numbers_df.iterrows():
+                pairs = combinations(sorted(row.values), 2)
+                pair_counts.update(pairs)
+
+            top_pairs = pair_counts.most_common(10)
+            pairs_df = pd.DataFrame(top_pairs, columns=["Paire", "Nombre d'apparitions"])
+            pairs_df["Paire"] = pairs_df["Paire"].apply(lambda x: f"{x[0]} & {x[1]}")
+
+            st.subheader("Top 10 des paires de numéros les plus fréquentes :")
+            st.dataframe(pairs_df)
+
+            fig_pairs = px.bar(
+                pairs_df,
+                y="Paire",
+                x="Nombre d'apparitions",
+                orientation='h',
+                title="Fréquence des paires de numéros",
+                labels={"Nombre d'apparitions": "Nombre d'apparitions", "Paire": "Paire de numéros"},
+                color="Nombre d'apparitions",
+                color_continuous_scale="Viridis",
+            )
+            fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
+            st.plotly_chart(fig_pairs, use_container_width=True)
+
+            budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
+            price_per_ticket = 3
+            n_tickets = budget // price_per_ticket
+
+            def generate_tickets(hot, cold, n_tickets):
+                tickets = set()
+                pool = 49
+                total_needed = 6
+
+                while len(tickets) < n_tickets:
+                    n_hot = random.randint(2, min(4, len(hot)))
+                    n_cold = random.randint(2, min(4, len(cold)))
+
+                    pick_hot = random.sample(hot, n_hot)
+                    pick_cold = random.sample(cold, n_cold)
+
+                    current = set(pick_hot + pick_cold)
+                    while len(current) < total_needed:
+                        current.add(random.randint(1, pool))
+
+                    ticket_tuple = tuple(sorted(int(x) for x in current))
+                    tickets.add(ticket_tuple)
+
+                return list(tickets)
+
+            tickets = generate_tickets(hot, cold, n_tickets)
+
+            st.subheader("Tickets générés :")
+            for i, t in enumerate(tickets, 1):
+                st.write(f"{i}: {t}")
+
+    except Exception as e:
+        st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
+
+else:
+    st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
