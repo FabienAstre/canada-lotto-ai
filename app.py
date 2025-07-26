@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
-import random
 from collections import Counter
-import matplotlib.pyplot as plt
+import random
+import plotly.express as px
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="Canada Lotto AI", page_icon="🎲")
+st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
 st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyse des tirages réels, statistiques et génération de tickets.")
@@ -12,83 +13,115 @@ st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 uploaded_file = st.file_uploader(
     "Importer un fichier CSV Lotto 6/49",
     type=["csv"],
-    accept_multiple_files=False,
+    help="CSV avec colonnes des 6 numéros (N1 à N6) ou simplement 6 colonnes numériques",
 )
 
-def process_draws(df):
-    # Ensure columns are int and drop invalid rows
-    try:
-        draws = df.astype(int)
-        # Keep only first 6 columns if more are present
-        draws = draws.iloc[:, :6]
-        return draws
-    except Exception as e:
-        st.error(f"Erreur lors du traitement des données : {e}")
+def clean_and_extract_numbers(df):
+    # Keep only columns that can be converted to int and contain values 1-49
+    nums_cols = []
+    for col in df.columns:
+        # Try convert to int
+        try:
+            col_vals = df[col].dropna().astype(int)
+            # Check if values in range 1-49 (some leniency here)
+            if col_vals.between(1, 49).all():
+                nums_cols.append(col)
+        except Exception:
+            continue
+    # Take only first 6 valid numeric columns
+    if len(nums_cols) < 6:
         return None
-
-def generate_tickets(hot, cold, budget, game="649"):
-    price = 3 if game == "649" else 5
-    n_tickets = budget // price
-    tickets = set()
-    pool = 49 if game == "649" else 50
-    total_needed = 6 if game == "649" else 7
-
-    while len(tickets) < n_tickets:
-        n_hot = random.randint(2, min(4, len(hot)))
-        n_cold = random.randint(2, min(4, len(cold)))
-
-        pick_hot = random.sample(hot, n_hot)
-        pick_cold = random.sample(cold, n_cold)
-
-        current = set(pick_hot + pick_cold)
-        while len(current) < total_needed:
-            current.add(random.randint(1, pool))
-
-        tickets.add(tuple(sorted(current)))
-
-    return list(tickets)
+    return df[nums_cols[:6]].astype(int)
 
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
-        draws = process_draws(df)
-        if draws is None or draws.empty:
-            st.warning("Le fichier CSV est vide ou invalide.")
+        numbers_df = clean_and_extract_numbers(df)
+        if numbers_df is None:
+            st.error("Le fichier CSV doit contenir au moins 6 colonnes de numéros valides entre 1 et 49.")
         else:
             st.subheader("Derniers tirages :")
-            st.dataframe(draws)
+            st.dataframe(numbers_df.tail(30).reset_index(drop=True))
 
-            # Flatten all numbers for frequency analysis
-            all_numbers = draws.values.flatten()
+            # Flatten numbers for frequency
+            all_numbers = numbers_df.values.flatten()
             counter = Counter(all_numbers)
+
+            # Hot and cold numbers
             hot = [num for num, _ in counter.most_common(6)]
-            cold = [num for num in sorted(counter, key=counter.get)[:6]]
+            cold = [num for num, _ in counter.most_common()[:-7:-1]]  # 6 least common
 
             st.subheader("Numéros chauds :")
             st.write(", ".join(map(str, hot)))
             st.subheader("Numéros froids :")
             st.write(", ".join(map(str, cold)))
 
-            st.subheader("Fréquence des numéros")
-            freq_df = pd.DataFrame(counter.items(), columns=["Numéro", "Fréquence"]).sort_values(by="Fréquence", ascending=False)
-            fig, ax = plt.subplots(figsize=(12, 5))
-            ax.bar(freq_df["Numéro"].astype(str), freq_df["Fréquence"], color="skyblue")
-            ax.set_title("Fréquence des numéros (tirages importés)")
-            ax.set_xlabel("Numéro")
-            ax.set_ylabel("Fréquence")
-            st.pyplot(fig)
+            # Frequency DataFrame for plotting
+            freq_df = pd.DataFrame({ "Numéro": list(range(1, 50) ) })
+            freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
 
-            budget = st.slider("Budget en $", 3, 100, 30, 3)
+            # Interactive Frequency Bar Chart
+            fig = px.bar(
+                freq_df,
+                x="Numéro",
+                y="Fréquence",
+                title="Fréquence des numéros (30 derniers tirages)",
+                labels={"Numéro": "Numéro", "Fréquence": "Nombre d'apparitions"},
+                color="Fréquence",
+                color_continuous_scale="Blues",
+            )
+            fig.update_layout(template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
 
-            tickets = generate_tickets(hot, cold, budget, "649")
+            # Hot vs Cold Numbers Chart
+            hot_df = freq_df[freq_df["Numéro"].isin(hot)]
+            cold_df = freq_df[freq_df["Numéro"].isin(cold)]
+
+            fig2 = go.Figure()
+            fig2.add_trace(go.Bar(x=hot_df["Numéro"], y=hot_df["Fréquence"], name="Numéros chauds", marker_color="red"))
+            fig2.add_trace(go.Bar(x=cold_df["Numéro"], y=cold_df["Fréquence"], name="Numéros froids", marker_color="blue"))
+            fig2.update_layout(
+                barmode="group",
+                title="Comparaison Numéros chauds vs froids",
+                xaxis_title="Numéro",
+                yaxis_title="Fréquence",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+            # Budget slider and ticket generator
+            budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
+            price_per_ticket = 3
+            n_tickets = budget // price_per_ticket
+
+            def generate_tickets(hot, cold, n_tickets):
+                tickets = set()
+                pool = 49
+                total_needed = 6
+
+                while len(tickets) < n_tickets:
+                    n_hot = random.randint(2, min(4, len(hot)))
+                    n_cold = random.randint(2, min(4, len(cold)))
+
+                    pick_hot = random.sample(hot, n_hot)
+                    pick_cold = random.sample(cold, n_cold)
+
+                    current = set(pick_hot + pick_cold)
+                    while len(current) < total_needed:
+                        current.add(random.randint(1, pool))
+
+                    tickets.add(tuple(sorted(current)))
+
+                return list(tickets)
+
+            tickets = generate_tickets(hot, cold, n_tickets)
 
             st.subheader("Tickets générés :")
-            for i, ticket in enumerate(tickets, 1):
-                # Convert np.int64 to native int for clean display
-                clean_ticket = tuple(int(n) for n in ticket)
-                st.write(f"{i}: {clean_ticket}")
+            for i, t in enumerate(tickets, 1):
+                st.write(f"{i}: {t}")
 
     except Exception as e:
-        st.error(f"Erreur lors du chargement du fichier : {e}")
+        st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
 else:
-    st.info("Veuillez importer un fichier CSV valide contenant les tirages Lotto 6/49.")
+    st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
+
