@@ -13,24 +13,33 @@ st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 
 def fetch_lotto649_results():
     url = "https://www.lotterypost.com/results/bc/lotto649/past"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/115.0 Safari/537.36"
+        )
+    }
     results = []
     try:
-        page = requests.get(url, timeout=10)
+        page = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(page.text, "html.parser")
 
-        # Each draw is a row in the results table with class 'table table-striped results'
-        # The winning numbers are inside <td> elements with class 'results'
-        rows = soup.select("table.results tbody tr")[:30]  # Take first 30 rows
+        # Essaie de sélectionner la table des résultats
+        rows = soup.select("table#results tbody tr")  # Parfois c'est "results"
+        if not rows:
+            rows = soup.select("table.results tbody tr")  # Sinon fallback
 
-        for row in rows:
-            # The winning numbers are in a td with class 'results'
+        # Prendre max 30 tirages
+        for row in rows[:30]:
+            # Colonne avec les numéros gagnants
             nums_td = row.select_one("td.results")
             if nums_td:
-                # Numbers are in <span class="ball"> elements
                 balls = nums_td.select("span.ball")
                 nums = [int(ball.text.strip()) for ball in balls if ball.text.strip().isdigit()]
                 if len(nums) >= 6:
                     results.append(nums[:6])
+
         return results
     except Exception as e:
         st.error(f"Erreur lors de la récupération des données: {e}")
@@ -94,5 +103,6 @@ if draws:
     st.subheader("Tickets générés :")
     for i, t in enumerate(tickets, 1):
         st.write(f"{i}: {t}")
+
 else:
     st.warning("Aucun tirage disponible pour l'instant.")
