@@ -9,21 +9,28 @@ st.set_page_config(page_title="Canada Lotto 6/49", page_icon="🎲")
 
 # ------------------- FUNCTIONS ------------------- #
 def load_lotto_csv(csv_file):
-    """Load Lotto 6/49 data from CSV"""
+    """Load Lotto 6/49 data from CSV and skip date columns."""
     try:
         df = pd.read_csv(csv_file)
         df = df.dropna(how="any")  # Remove empty rows
 
-        # Detect if the first column is a date
-        first_value = str(df.iloc[0, 0])
-        if not first_value.isdigit():  # Likely a date column
-            draws = df.iloc[:, 1:7].values.tolist()
-        else:
-            draws = df.iloc[:, 0:6].values.tolist()
+        # Try to extract numeric columns automatically
+        numeric_df = df.select_dtypes(include=['int64', 'float64'])
 
-        # Convert all values to int
-        draws = [[int(num) for num in row] for row in draws]
-        return draws
+        if numeric_df.shape[1] < 6:
+            # If numbers are strings (e.g., "01"), convert manually
+            all_data = []
+            for _, row in df.iterrows():
+                # Take columns 1-6 (skipping the first column if it's a date)
+                try:
+                    numbers = [int(x) for x in row[1:7]]
+                    all_data.append(numbers)
+                except:
+                    continue
+            return all_data
+        else:
+            draws = numeric_df.iloc[:, :6].astype(int).values.tolist()
+            return draws
     except Exception as e:
         st.error(f"Erreur CSV: {e}")
         return []
@@ -84,7 +91,7 @@ if csv_file:
         freq_df = pd.DataFrame(counter.items(), columns=["Numéro", "Fréquence"]).sort_values(by="Fréquence", ascending=False)
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.bar(freq_df["Numéro"].astype(str), freq_df["Fréquence"], color="skyblue")
-        ax.set_title("Fréquence des numéros (30 derniers tirages)")
+        ax.set_title("Fréquence des numéros (basée sur les tirages)")
         st.pyplot(fig)
 
         # Ticket generation
