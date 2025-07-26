@@ -7,31 +7,39 @@ st.title("🎲 Canada Lotto 6/49 Analyzer")
 uploaded_file = st.file_uploader("Importer un fichier CSV Lotto 6/49", type=["csv"])
 
 if uploaded_file is not None:
-    uploaded_file.seek(0)
     try:
         df = pd.read_csv(uploaded_file)
     except Exception as e:
         st.error(f"Erreur de lecture CSV: {e}")
         st.stop()
 
-    # Detect columns with lotto numbers (N1, N2, ..., N6)
-    lotto_cols = [col for col in df.columns if col.strip().upper() in ['N1','N2','N3','N4','N5','N6']]
-    if not lotto_cols:
-        st.error("Le fichier CSV doit contenir les colonnes N1, N2, N3, N4, N5, N6")
+    # Columns with main drawn numbers exactly as in your file
+    lotto_cols = [
+        'NUMBER DRAWN 1',
+        'NUMBER DRAWN 2',
+        'NUMBER DRAWN 3',
+        'NUMBER DRAWN 4',
+        'NUMBER DRAWN 5',
+        'NUMBER DRAWN 6',
+    ]
+
+    missing_cols = [col for col in lotto_cols if col not in df.columns]
+    if missing_cols:
+        st.error(f"Le fichier CSV est manquant les colonnes: {', '.join(missing_cols)}")
         st.stop()
 
-    # Flatten all numbers into a single series
+    # Extract all drawn numbers into one flat list
     all_numbers = df[lotto_cols].values.flatten()
 
-    # Compute frequency counts, sort by number ascending
+    # Compute frequency counts and sort by number
     freq = pd.Series(all_numbers).value_counts().sort_index()
 
-    st.subheader("Fréquence des numéros tirés")
+    st.subheader("Fréquence des numéros tirés (sans le numéro bonus)")
     st.write(freq.to_frame(name="Fréquence"))
 
-    # Plot frequency bar chart with legend
+    # Plot frequency bar chart
     fig, ax = plt.subplots(figsize=(12, 6))
-    bars = ax.bar(freq.index, freq.values, color='dodgerblue', label='Nombre de tirages')
+    bars = ax.bar(freq.index, freq.values, color='royalblue', label='Fréquence des tirages')
     ax.set_xlabel("Numéro")
     ax.set_ylabel("Fréquence")
     ax.set_title("Fréquence des numéros dans les tirages importés")
@@ -42,7 +50,7 @@ if uploaded_file is not None:
         height = bar.get_height()
         ax.annotate(f'{int(height)}',
                     xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3),  # 3 points vertical offset
+                    xytext=(0, 3),
                     textcoords="offset points",
                     ha='center', va='bottom', fontsize=8)
 
