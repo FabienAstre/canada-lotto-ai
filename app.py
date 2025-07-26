@@ -48,7 +48,7 @@ def extract_numbers_and_bonus(df):
 
 if uploaded_file:
     try:
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file, sep='\t')
         st.subheader("Données complètes importées :")
         st.dataframe(df)
 
