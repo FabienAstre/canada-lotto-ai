@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import random
 import matplotlib.colors as mcolors
+import random
 
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", layout="wide")
 
@@ -20,12 +20,29 @@ uploaded_file = st.file_uploader(
 def load_data(file):
     try:
         df = pd.read_csv(file)
-        number_cols = [col for col in df.columns if df[col].dtype in [np.int64, np.float64, np.int32, np.float32]]
+        # Assume first column might be date
+        if pd.api.types.is_datetime64_any_dtype(df.iloc[:, 0]):
+            df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
+        else:
+            # Try parse first col as date
+            try:
+                df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
+            except Exception:
+                pass
+
+        # Find columns with lottery numbers (ints)
+        number_cols = []
+        for col in df.columns:
+            if df[col].dtype in [np.int64, np.float64, np.int32, np.float32]:
+                number_cols.append(col)
+
+        # We expect 6 numbers per draw
         if len(number_cols) < 6:
-            df = df.iloc[:, :6]
-            df = df.apply(pd.to_numeric, errors='coerce')
+            # fallback to first 6 columns after date
+            df = df.iloc[:, 1:7]
         else:
             df = df[number_cols[:6]]
+
         df.columns = ["N1", "N2", "N3", "N4", "N5", "N6"]
         df.dropna(inplace=True)
         df = df.astype(int)
@@ -88,43 +105,4 @@ if uploaded_file:
         st.markdown(f"**Numéros chauds :** {', '.join(map(str, hot_numbers))}")
         st.markdown(f"**Numéros froids :** {', '.join(map(str, cold_numbers))}")
 
-        budget = st.number_input("Budget en $ (chaque ticket coûte 3$)", min_value=3, max_value=300, value=30, step=3)
-
-        tickets = generate_tickets(hot_numbers, cold_numbers, budget)
-
-        st.subheader(f"Tickets générés ({len(tickets)}) :")
-        for i, ticket in enumerate(tickets, 1):
-            st.write(f"{i}: {ticket}")
-
-        st.subheader("Visualisation des fréquences")
-
-        # Sorted bar chart with color gradient
-        sorted_freq = freq.sort_values(ascending=True)
-        colors = plt.cm.viridis((sorted_freq - sorted_freq.min()) / (sorted_freq.max() - sorted_freq.min()))
-
-        fig1, ax1 = plt.subplots(figsize=(12, 5))
-        ax1.barh(sorted_freq.index, sorted_freq.values, color=colors)
-        ax1.set_xlabel("Fréquence")
-        ax1.set_ylabel("Numéro")
-        ax1.set_title("Fréquence des numéros tirés (trié par fréquence)")
-        st.pyplot(fig1)
-
-        # Cumulative frequency line chart
-        cum_freq = freq.sort_index().cumsum()
-        fig2, ax2 = plt.subplots(figsize=(12, 5))
-        ax2.plot(cum_freq.index, cum_freq.values, marker='o', linestyle='-', color='orange')
-        ax2.set_xlabel("Numéro")
-        ax2.set_ylabel("Fréquence cumulée")
-        ax2.set_title("Fréquence cumulée des numéros tirés (1 à 49)")
-        ax2.grid(True)
-        st.pyplot(fig2)
-
-        # Hot vs Cold Pie Chart
-        fig3, ax3 = plt.subplots()
-        counts = [sum(freq.loc[hot_numbers]), sum(freq.loc[cold_numbers])]
-        ax3.pie(counts, labels=["Chauds", "Froids"], autopct="%1.1f%%", colors=['red', 'blue'])
-        ax3.set_title("Proportion des tirages: Numéros chauds vs froids")
-        st.pyplot(fig3)
-
-else:
-    st.info("Veuillez importer un fichier CSV avec les tirages Lotto 6/49.")
+        budget = st.number_input(_
