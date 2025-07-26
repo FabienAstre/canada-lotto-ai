@@ -4,6 +4,7 @@ from collections import Counter
 import random
 import plotly.express as px
 import plotly.graph_objects as go
+from itertools import combinations
 
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
@@ -27,16 +28,13 @@ def extract_numbers_and_bonus(df):
     ]
     bonus_col = "BONUS NUMBER"
 
-    # Check required columns exist
     if not all(col in df.columns for col in required_main_cols):
         return None, None
 
-    # Extract main numbers and ensure valid range
     main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
     if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
         return None, None
 
-    # Extract bonus number if available and valid
     bonus_series = None
     if bonus_col in df.columns:
         bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
@@ -63,7 +61,7 @@ if uploaded_file:
                 st.subheader("Bonus Numbers (derniers tirages) :")
                 st.write(bonus_series.tail(30).to_list())
 
-            # Frequency counts for main numbers — use ALL draws here!
+            # Frequency counts for main numbers — all draws
             all_numbers = numbers_df.values.flatten()
             counter = Counter(all_numbers)
 
@@ -115,6 +113,32 @@ if uploaded_file:
                 template="plotly_white",
             )
             st.plotly_chart(fig2, use_container_width=True)
+
+            # --- PAIR FREQUENCY ANALYSIS ---
+            pair_counts = Counter()
+            for _, row in numbers_df.iterrows():
+                pairs = combinations(sorted(row.values), 2)
+                pair_counts.update(pairs)
+
+            top_pairs = pair_counts.most_common(10)
+            pairs_df = pd.DataFrame(top_pairs, columns=["Pair", "Count"])
+            pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
+
+            st.subheader("Top 10 des paires de numéros les plus fréquentes :")
+            st.dataframe(pairs_df)
+
+            fig_pairs = px.bar(
+                pairs_df,
+                y="Pair",
+                x="Count",
+                orientation='h',
+                title="Fréquence des paires de numéros",
+                labels={"Count": "Nombre d'apparitions", "Pair": "Paire de numéros"},
+                color="Count",
+                color_continuous_scale="Viridis",
+            )
+            fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
+            st.plotly_chart(fig_pairs, use_container_width=True)
 
             # Ticket generation
             budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
