@@ -13,14 +13,24 @@ def load_lotto_csv(csv_file):
     try:
         df = pd.read_csv(csv_file)
         df = df.dropna(how="any")  # Remove empty rows
-        draws = df.iloc[:, 1:7].values.tolist()  # Assuming columns are: Date, N1, N2, N3, N4, N5, N6, Bonus
+
+        # Detect if the first column is a date
+        first_value = str(df.iloc[0, 0])
+        if not first_value.isdigit():  # Likely a date column
+            draws = df.iloc[:, 1:7].values.tolist()
+        else:
+            draws = df.iloc[:, 0:6].values.tolist()
+
+        # Convert all values to int
         draws = [[int(num) for num in row] for row in draws]
         return draws
     except Exception as e:
         st.error(f"Erreur CSV: {e}")
         return []
 
+
 def generate_tickets(hot, cold, budget, game="649"):
+    """Generate lotto tickets using hot/cold number strategy."""
     price = 3  # Price per ticket for 6/49
     n_tickets = budget // price
     tickets = set()
@@ -42,6 +52,7 @@ def generate_tickets(hot, cold, budget, game="649"):
 
     return list(tickets)
 
+
 # ------------------- UI ------------------- #
 st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyse des tirages réels, statistiques et génération de tickets.")
@@ -54,7 +65,7 @@ if csv_file:
 
     if draws:
         st.subheader("Derniers tirages :")
-        df_draws = pd.DataFrame(draws, columns=[f"N{i+1}" for i in range(len(draws[0]))])
+        df_draws = pd.DataFrame(draws, columns=[f"N{i+1}" for i in range(6)])
         st.dataframe(df_draws)
 
         # Frequency Analysis
