@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Canada Lotto AI", page_icon="🎲")
 
-st.title("🇨🇦 Canada Lotto AI - 6/49")
+st.title("🇨🇦 Canada Lotto AI - Lotto 6/49")
 st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 
 def fetch_lotto649_results():
@@ -17,22 +17,26 @@ def fetch_lotto649_results():
     try:
         page = requests.get(url, timeout=10)
         soup = BeautifulSoup(page.text, "html.parser")
-        draws = soup.select("div.draw-history__draw")[:30]
-        for draw in draws:
-            numbers = draw.select("span.draw-history__number")
-            nums = []
-            for n in numbers:
-                text = n.text.strip()
-                if text.isdigit():
-                    nums.append(int(text))
-            if len(nums) >= 6:
-                results.append(nums[:6])
+
+        # Each draw is a row in the results table with class 'table table-striped results'
+        # The winning numbers are inside <td> elements with class 'results'
+        rows = soup.select("table.results tbody tr")[:30]  # Take first 30 rows
+
+        for row in rows:
+            # The winning numbers are in a td with class 'results'
+            nums_td = row.select_one("td.results")
+            if nums_td:
+                # Numbers are in <span class="ball"> elements
+                balls = nums_td.select("span.ball")
+                nums = [int(ball.text.strip()) for ball in balls if ball.text.strip().isdigit()]
+                if len(nums) >= 6:
+                    results.append(nums[:6])
         return results
     except Exception as e:
         st.error(f"Erreur lors de la récupération des données: {e}")
         return []
 
-game = st.selectbox("Choisir le jeu :", ["Lotto 6/49"])
+game = "Lotto 6/49"
 
 with st.spinner("Récupération des derniers tirages..."):
     draws = fetch_lotto649_results()
@@ -71,7 +75,6 @@ if draws:
         total_needed = 6 if game == "649" else 7
 
         while len(tickets) < n_tickets:
-            # Dynamic split between hot and cold numbers per ticket
             n_hot = random.randint(2, min(4, len(hot)))
             n_cold = random.randint(2, min(4, len(cold)))
 
@@ -79,14 +82,10 @@ if draws:
             pick_cold = random.sample(cold, n_cold)
 
             current = set(pick_hot + pick_cold)
-
-            # Fill the rest with random numbers from the full pool, avoiding duplicates
             while len(current) < total_needed:
-                candidate = random.randint(1, pool)
-                current.add(candidate)
+                current.add(random.randint(1, pool))
 
-            ticket = tuple(sorted(current))
-            tickets.add(ticket)
+            tickets.add(tuple(sorted(current)))
 
         return list(tickets)
 
@@ -95,6 +94,5 @@ if draws:
     st.subheader("Tickets générés :")
     for i, t in enumerate(tickets, 1):
         st.write(f"{i}: {t}")
-
 else:
     st.warning("Aucun tirage disponible pour l'instant.")
