@@ -9,18 +9,15 @@ from itertools import combinations
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
 st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyse des tirages, statistiques et génération de tickets.")
+st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 
 uploaded_file = st.file_uploader(
     "Importer un fichier CSV Lotto 6/49",
     type=["csv"],
-    help="CSV avec colonnes : NUMBER DRAWN 1 à NUMBER DRAWN 6 et BONUS NUMBER (la colonne DRAW DATE est optionnelle et ignorée)",
+    help="CSV avec colonnes: NUMBER DRAWN 1 à NUMBER DRAWN 6 et BONUS NUMBER",
 )
 
 def extract_numbers_and_bonus(df):
-    # Nettoyer noms colonnes
-    df.columns = df.columns.str.strip().str.upper()
-    
     required_main_cols = [
         "NUMBER DRAWN 1",
         "NUMBER DRAWN 2",
@@ -30,69 +27,53 @@ def extract_numbers_and_bonus(df):
         "NUMBER DRAWN 6",
     ]
     bonus_col = "BONUS NUMBER"
-    
-    missing_cols = [col for col in required_main_cols if col not in df.columns]
-    if missing_cols:
-        st.error(f"Colonnes principales manquantes : {missing_cols}")
+
+    if not all(col in df.columns for col in required_main_cols):
         return None, None
 
-    # Convertir colonnes principales en numérique et vérifier NaN
-    main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce')
-    if main_numbers_df.isna().any().any():
-        st.error("Des valeurs invalides ou manquantes détectées dans les colonnes principales.")
-        st.write(main_numbers_df[main_numbers_df.isna().any(axis=1)])
-        return None, None
-    
-    # Vérifier valeurs entre 1 et 49
-    if not ((main_numbers_df >= 1) & (main_numbers_df <= 49)).all().all():
-        st.error("Toutes les valeurs des colonnes principales doivent être entre 1 et 49.")
-        invalid = main_numbers_df[~((main_numbers_df >= 1) & (main_numbers_df <= 49)).all(axis=1)]
-        st.write(invalid)
+    main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
+    if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
         return None, None
 
-    # Bonus
     bonus_series = None
     if bonus_col in df.columns:
-        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce')
-        if bonus_series.isna().any():
-            st.error("Des valeurs invalides détectées dans la colonne BONUS NUMBER.")
-            return None, None
+        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
         if not bonus_series.between(1, 49).all():
-            st.error("Toutes les valeurs de BONUS NUMBER doivent être entre 1 et 49.")
-            return None, None
+            bonus_series = None
 
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None
-
 
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
         st.subheader("Données complètes importées :")
-        st.dataframe(df.head(10))
-        
+        st.dataframe(df)
+
         numbers_df, bonus_series = extract_numbers_and_bonus(df)
 
-        if numbers_df is not None:
-            st.subheader("Derniers tirages (numéros) :")
+        if numbers_df is None:
+            st.error("Le fichier CSV doit contenir les 6 colonnes principales 'NUMBER DRAWN 1' à 'NUMBER DRAWN 6' avec des nombres valides entre 1 et 49.")
+        else:
+            st.subheader("Derniers tirages :")
             st.dataframe(numbers_df.tail(30).reset_index(drop=True))
 
             if bonus_series is not None:
                 st.subheader("Bonus Numbers (derniers tirages) :")
                 st.write(bonus_series.tail(30).to_list())
 
-            # Toutes les valeurs des tirages principaux à plat
+            # Frequency counts for main numbers — all draws
             all_numbers = numbers_df.values.flatten()
             counter = Counter(all_numbers)
 
-            # Bonus counter
+            # Frequency counts for bonus numbers
             bonus_counter = Counter(bonus_series) if bonus_series is not None else Counter()
 
             hot = [num for num, _ in counter.most_common(6)]
             cold = [num for num, _ in counter.most_common()[:-7:-1]]
 
-            st.subheader("Numéros chauds (plus fréquents) :")
+            st.subheader("Numéros chauds :")
             st.write(", ".join(map(str, hot)))
-            st.subheader("Numéros froids (moins fréquents) :")
+            st.subheader("Numéros froids :")
             st.write(", ".join(map(str, cold)))
 
             if bonus_series is not None:
@@ -100,11 +81,11 @@ if uploaded_file:
                 bonus_hot = [num for num, _ in bonus_counter.most_common(6)]
                 st.write(", ".join(map(str, bonus_hot)))
 
-            # DataFrame fréquence tous numéros 1-49
+            # Frequency DataFrame for main numbers
             freq_df = pd.DataFrame({"Numéro": list(range(1, 50))})
             freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
 
-            # Graphe fréquence
+            # Plot main numbers frequency
             fig = px.bar(
                 freq_df,
                 x="Numéro",
@@ -117,7 +98,7 @@ if uploaded_file:
             fig.update_layout(template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
-            # Graphique chaud vs froid
+            # Hot vs Cold bar chart
             hot_df = freq_df[freq_df["Numéro"].isin(hot)]
             cold_df = freq_df[freq_df["Numéro"].isin(cold)]
 
@@ -133,33 +114,33 @@ if uploaded_file:
             )
             st.plotly_chart(fig2, use_container_width=True)
 
-            # Analyse des paires
+            # --- PAIR FREQUENCY ANALYSIS ---
             pair_counts = Counter()
             for _, row in numbers_df.iterrows():
                 pairs = combinations(sorted(row.values), 2)
                 pair_counts.update(pairs)
 
             top_pairs = pair_counts.most_common(10)
-            pairs_df = pd.DataFrame(top_pairs, columns=["Paire", "Nombre d'apparitions"])
-            pairs_df["Paire"] = pairs_df["Paire"].apply(lambda x: f"{x[0]} & {x[1]}")
+            pairs_df = pd.DataFrame(top_pairs, columns=["Pair", "Count"])
+            pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
 
             st.subheader("Top 10 des paires de numéros les plus fréquentes :")
             st.dataframe(pairs_df)
 
             fig_pairs = px.bar(
                 pairs_df,
-                y="Paire",
-                x="Nombre d'apparitions",
+                y="Pair",
+                x="Count",
                 orientation='h',
                 title="Fréquence des paires de numéros",
-                labels={"Nombre d'apparitions": "Nombre d'apparitions", "Paire": "Paire de numéros"},
-                color="Nombre d'apparitions",
+                labels={"Count": "Nombre d'apparitions", "Pair": "Paire de numéros"},
+                color="Count",
                 color_continuous_scale="Viridis",
             )
             fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
             st.plotly_chart(fig_pairs, use_container_width=True)
 
-            # Génération tickets
+            # Ticket generation
             budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
             price_per_ticket = 3
             n_tickets = budget // price_per_ticket
@@ -196,4 +177,3 @@ if uploaded_file:
 
 else:
     st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
-
