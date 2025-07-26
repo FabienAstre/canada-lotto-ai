@@ -56,14 +56,14 @@ if uploaded_file:
         if numbers_df is None:
             st.error("Le fichier CSV doit contenir les 6 colonnes principales 'NUMBER DRAWN 1' à 'NUMBER DRAWN 6' avec des nombres valides entre 1 et 49.")
         else:
-            st.subheader("Derniers tirages (6 numéros) :")
+            st.subheader("Derniers tirages :")
             st.dataframe(numbers_df.tail(30).reset_index(drop=True))
 
             if bonus_series is not None:
                 st.subheader("Bonus Numbers (derniers tirages) :")
                 st.write(bonus_series.tail(30).to_list())
 
-            # Frequency counts for main numbers
+            # Frequency counts for main numbers — use ALL draws here!
             all_numbers = numbers_df.values.flatten()
             counter = Counter(all_numbers)
 
@@ -92,7 +92,7 @@ if uploaded_file:
                 freq_df,
                 x="Numéro",
                 y="Fréquence",
-                title="Fréquence des numéros (30 derniers tirages)",
+                title="Fréquence des numéros (tous les tirages importés)",
                 labels={"Numéro": "Numéro", "Fréquence": "Nombre d'apparitions"},
                 color="Fréquence",
                 color_continuous_scale="Blues",
