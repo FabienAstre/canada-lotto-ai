@@ -1,9 +1,11 @@
 
-# Canada Lotto AI
+# Canada Lotto AI (v3)
 
-Une petite application Streamlit pour analyser les tirages (6/49 & Lotto Max) et générer des tickets basés sur les numéros "chauds" et "froids".
+Version avec statistiques avancées :
+- Scraping des 30 derniers tirages.
+- Graphique de fréquence des numéros.
+- Numéros chauds/froids et génération de tickets.
 
-## Déploiement sur Streamlit Cloud
-1. Créez un compte sur [Streamlit Cloud](https://streamlit.io/cloud).
-2. Connectez votre repo GitHub contenant ce code.
-3. Choisissez `app.py` comme fichier principal et cliquez sur "Deploy".
+## Déploiement
+1. Ajouter ce code sur GitHub (repo public).
+2. Déployer via Streamlit Cloud.
