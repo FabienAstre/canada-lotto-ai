@@ -5,6 +5,7 @@ import random
 import plotly.express as px
 import plotly.graph_objects as go
 from itertools import combinations
+import numpy as np  # --- NEW: numpy for weighted sampling
 
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
@@ -140,12 +141,16 @@ if uploaded_file:
             fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
             st.plotly_chart(fig_pairs, use_container_width=True)
 
-            # Ticket generation
+            # Ticket generation settings
             budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
             price_per_ticket = 3
             n_tickets = budget // price_per_ticket
 
-            def generate_tickets(hot, cold, n_tickets):
+            # --- NEW: Choose ticket generation strategy ---
+            strategy = st.radio("Choisir la méthode de génération des tickets :", 
+                                ("Hot/Cold mix (original)", "Weighted by Frequency (new)"))
+
+            def generate_tickets_hot_cold(hot, cold, n_tickets):
                 tickets = set()
                 pool = 49
                 total_needed = 6
@@ -166,7 +171,23 @@ if uploaded_file:
 
                 return list(tickets)
 
-            tickets = generate_tickets(hot, cold, n_tickets)
+            # --- NEW: Weighted by frequency ticket generation ---
+            def generate_tickets_weighted(counter, n_tickets):
+                numbers = np.array(range(1, 50))
+                freqs = np.array([counter.get(num, 0) for num in numbers])
+                weights = freqs + 1  # Add 1 to avoid zero weights
+
+                tickets = set()
+                while len(tickets) < n_tickets:
+                    ticket = tuple(sorted(np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())))
+                    tickets.add(ticket)
+                return list(tickets)
+
+            # Generate tickets based on selected strategy
+            if strategy == "Hot/Cold mix (original)":
+                tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+            else:
+                tickets = generate_tickets_weighted(counter, n_tickets)
 
             st.subheader("Tickets générés :")
             for i, t in enumerate(tickets, 1):
