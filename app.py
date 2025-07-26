@@ -1,59 +1,119 @@
 import streamlit as st
 import pandas as pd
+import random
+import requests
+from collections import Counter
 import matplotlib.pyplot as plt
 
-st.title("🎲 Canada Lotto 6/49 Analyzer")
+# ------------------- CONFIG ------------------- #
+st.set_page_config(page_title="Lotto Dashboard", page_icon="🎲")
 
-uploaded_file = st.file_uploader("Importer un fichier CSV Lotto 6/49", type=["csv"])
+API_KEY = "YOUR_API_KEY"  # Replace with your Downtack API key
+BASE_URL = "https://downtack.com/api"
 
-if uploaded_file is not None:
+# ------------------- FUNCTIONS ------------------- #
+
+def load_canada_csv(csv_file):
+    """Load Canadian Lotto 6/49 data from CSV"""
     try:
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(csv_file)
+        df = df.dropna(how="any")  # Clean empty rows
+        draws = df.iloc[:, 1:7].values.tolist()  # Columns with numbers
+        draws = [[int(num) for num in row] for row in draws]
+        return draws
     except Exception as e:
-        st.error(f"Erreur de lecture CSV: {e}")
-        st.stop()
+        st.error(f"Erreur CSV: {e}")
+        return []
 
-    # Columns with main drawn numbers exactly as in your file
-    lotto_cols = [
-        'NUMBER DRAWN 1',
-        'NUMBER DRAWN 2',
-        'NUMBER DRAWN 3',
-        'NUMBER DRAWN 4',
-        'NUMBER DRAWN 5',
-        'NUMBER DRAWN 6',
-    ]
+def get_us_lottery_games():
+    """Fetch U.S. lottery games from Downtack API"""
+    url = f"{BASE_URL}/get-all-games?api_key={API_KEY}"
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
 
-    missing_cols = [col for col in lotto_cols if col not in df.columns]
-    if missing_cols:
-        st.error(f"Le fichier CSV est manquant les colonnes: {', '.join(missing_cols)}")
-        st.stop()
+def generate_tickets(hot, cold, budget, game="649"):
+    price = 3 if game == "649" else 5
+    n_tickets = budget // price
+    tickets = set()
+    pool = 49 if game == "649" else 50
+    total_needed = 6 if game == "649" else 7
 
-    # Extract all drawn numbers into one flat list
-    all_numbers = df[lotto_cols].values.flatten()
+    while len(tickets) < n_tickets:
+        n_hot = random.randint(2, min(4, len(hot)))
+        n_cold = random.randint(2, min(4, len(cold)))
 
-    # Compute frequency counts and sort by number
-    freq = pd.Series(all_numbers).value_counts().sort_index()
+        pick_hot = random.sample(hot, n_hot)
+        pick_cold = random.sample(cold, n_cold)
 
-    st.subheader("Fréquence des numéros tirés (sans le numéro bonus)")
-    st.write(freq.to_frame(name="Fréquence"))
+        current = set(pick_hot + pick_cold)
+        while len(current) < total_needed:
+            current.add(random.randint(1, pool))
 
-    # Plot frequency bar chart
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bars = ax.bar(freq.index, freq.values, color='royalblue', label='Fréquence des tirages')
-    ax.set_xlabel("Numéro")
-    ax.set_ylabel("Fréquence")
-    ax.set_title("Fréquence des numéros dans les tirages importés")
-    ax.legend()
+        tickets.add(tuple(sorted(current)))
 
-    # Add value labels on top of bars
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(f'{int(height)}',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3),
-                    textcoords="offset points",
-                    ha='center', va='bottom', fontsize=8)
+    return list(tickets)
 
-    st.pyplot(fig)
+# ------------------- UI ------------------- #
+
+st.title("🎲 Lotto Dashboard")
+st.write("Analyse des tirages pour le Canada (Lotto 6/49) et USA (Powerball, Mega Millions).")
+
+# ---- Canada Lotto ---- #
+st.header("🇨🇦 Canada Lotto 6/49")
+canada_csv = st.file_uploader("Importer un CSV Lotto 6/49", type=["csv"])
+
+if canada_csv:
+    draws = load_canada_csv(canada_csv)
+
+    if draws:
+        st.subheader("30 derniers tirages :")
+        df_draws = pd.DataFrame(draws, columns=[f"N{i+1}" for i in range(len(draws[0]))])
+        st.dataframe(df_draws)
+
+        all_numbers = [num for draw in draws for num in draw]
+        counter = Counter(all_numbers)
+        hot = [num for num, _ in counter.most_common(6)]
+        cold = [num for num in sorted(counter, key=counter.get)[:6]]
+
+        st.subheader("Numéros chauds :")
+        st.write(", ".join(map(str, hot)))
+        st.subheader("Numéros froids :")
+        st.write(", ".join(map(str, cold)))
+
+        st.subheader("Statistiques (30 derniers tirages)")
+        freq_df = pd.DataFrame(counter.items(), columns=["Numéro", "Fréquence"]).sort_values(by="Fréquence", ascending=False)
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(freq_df["Numéro"].astype(str), freq_df["Fréquence"], color="skyblue")
+        ax.set_title("Fréquence des numéros")
+        st.pyplot(fig)
+
+        budget = st.slider("Budget en $", 3, 100, 30, 3)
+        tickets = generate_tickets(hot, cold, budget, "649")
+
+        st.subheader("Tickets générés :")
+        for i, t in enumerate(tickets, 1):
+            st.write(f"{i}: {t}")
+    else:
+        st.warning("Le CSV est vide ou invalide.")
 else:
-    st.info("Veuillez importer un fichier CSV pour commencer l'analyse.")
+    st.info("Veuillez importer un fichier CSV contenant les tirages du Lotto 6/49.")
+
+# ---- U.S. Lotteries ---- #
+st.header("🇺🇸 U.S. Lotteries (via Downtack API)")
+if st.button("Charger les résultats U.S."):
+    try:
+        us_data = get_us_lottery_games()
+        st.success("Données U.S. récupérées avec succès !")
+
+        # Display only Powerball & Mega Millions
+        for state, games in us_data.items():
+            for game in games:
+                if game['name'].lower() in ["powerball", "mega millions"]:
+                    st.subheader(f"{game['name']} ({state})")
+                    latest_draw = game['plays'][0]['draws'][0]
+                    numbers = [n['value'] for n in latest_draw['numbers']]
+                    st.write(f"Date : {latest_draw['date']}")
+                    st.write(f"Numéros : {', '.join(numbers)}")
+    except Exception as e:
+        st.error(f"Erreur Downtack API: {e}")
