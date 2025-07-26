@@ -48,12 +48,15 @@ def extract_numbers_and_bonus(df):
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
+        st.subheader("Données complètes importées :")
+        st.dataframe(df)
+
         numbers_df, bonus_series = extract_numbers_and_bonus(df)
 
         if numbers_df is None:
             st.error("Le fichier CSV doit contenir les 6 colonnes principales 'NUMBER DRAWN 1' à 'NUMBER DRAWN 6' avec des nombres valides entre 1 et 49.")
         else:
-            st.subheader("Derniers tirages :")
+            st.subheader("Derniers tirages (6 numéros) :")
             st.dataframe(numbers_df.tail(30).reset_index(drop=True))
 
             if bonus_series is not None:
