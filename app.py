@@ -12,7 +12,7 @@ st.title("🇨🇦 Canada Lotto AI - 6/49")
 st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 
 def fetch_lotto649_results():
-    url = "https://www.lotto.ca/en-ca/draw-history/lotto-649"
+    url = "https://www.lotterypost.com/results/bc/lotto649/past"
     results = []
     try:
         page = requests.get(url, timeout=10)
