@@ -20,15 +20,12 @@ def clean_and_extract_numbers(df):
     # Keep only columns that can be converted to int and contain values 1-49
     nums_cols = []
     for col in df.columns:
-        # Try convert to int
         try:
             col_vals = df[col].dropna().astype(int)
-            # Check if values in range 1-49 (some leniency here)
             if col_vals.between(1, 49).all():
                 nums_cols.append(col)
         except Exception:
             continue
-    # Take only first 6 valid numeric columns
     if len(nums_cols) < 6:
         return None
     return df[nums_cols[:6]].astype(int)
@@ -57,7 +54,7 @@ if uploaded_file:
             st.write(", ".join(map(str, cold)))
 
             # Frequency DataFrame for plotting
-            freq_df = pd.DataFrame({ "Numéro": list(range(1, 50) ) })
+            freq_df = pd.DataFrame({"Numéro": list(range(1, 50))})
             freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
 
             # Interactive Frequency Bar Chart
@@ -94,29 +91,28 @@ if uploaded_file:
             price_per_ticket = 3
             n_tickets = budget // price_per_ticket
 
-           def generate_tickets(hot, cold, n_tickets):
-    tickets = set()
-    pool = 49
-    total_needed = 6
+            def generate_tickets(hot, cold, n_tickets):
+                tickets = set()
+                pool = 49
+                total_needed = 6
 
-    while len(tickets) < n_tickets:
-        n_hot = random.randint(2, min(4, len(hot)))
-        n_cold = random.randint(2, min(4, len(cold)))
+                while len(tickets) < n_tickets:
+                    n_hot = random.randint(2, min(4, len(hot)))
+                    n_cold = random.randint(2, min(4, len(cold)))
 
-        pick_hot = random.sample(hot, n_hot)
-        pick_cold = random.sample(cold, n_cold)
+                    pick_hot = random.sample(hot, n_hot)
+                    pick_cold = random.sample(cold, n_cold)
 
-        current = set(pick_hot + pick_cold)
-        while len(current) < total_needed:
-            current.add(random.randint(1, pool))
+                    current = set(pick_hot + pick_cold)
+                    while len(current) < total_needed:
+                        current.add(random.randint(1, pool))
 
-        # Convert all to int here
-        ticket_tuple = tuple(sorted(int(x) for x in current))
+                    # Convert all numbers to plain Python int before tuple
+                    ticket_tuple = tuple(sorted(int(x) for x in current))
 
-        tickets.add(ticket_tuple)
+                    tickets.add(ticket_tuple)
 
-    return list(tickets)
-
+                return list(tickets)
 
             tickets = generate_tickets(hot, cold, n_tickets)
 
@@ -128,4 +124,3 @@ if uploaded_file:
         st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
 else:
     st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
-
