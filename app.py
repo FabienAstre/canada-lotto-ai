@@ -12,7 +12,7 @@ st.title("🇨🇦 Canada Lotto AI - Lotto 6/49")
 st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 
 def fetch_lotto649_results():
-    url = "https://www.lotto-8.com/canada/listltoCA649.asp"
+    url = "https://www.lottomaxnumbers.com/lotto-649/numbers/2025"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
