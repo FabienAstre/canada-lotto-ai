@@ -94,25 +94,29 @@ if uploaded_file:
             price_per_ticket = 3
             n_tickets = budget // price_per_ticket
 
-            def generate_tickets(hot, cold, n_tickets):
-                tickets = set()
-                pool = 49
-                total_needed = 6
+           def generate_tickets(hot, cold, n_tickets):
+    tickets = set()
+    pool = 49
+    total_needed = 6
 
-                while len(tickets) < n_tickets:
-                    n_hot = random.randint(2, min(4, len(hot)))
-                    n_cold = random.randint(2, min(4, len(cold)))
+    while len(tickets) < n_tickets:
+        n_hot = random.randint(2, min(4, len(hot)))
+        n_cold = random.randint(2, min(4, len(cold)))
 
-                    pick_hot = random.sample(hot, n_hot)
-                    pick_cold = random.sample(cold, n_cold)
+        pick_hot = random.sample(hot, n_hot)
+        pick_cold = random.sample(cold, n_cold)
 
-                    current = set(pick_hot + pick_cold)
-                    while len(current) < total_needed:
-                        current.add(random.randint(1, pool))
+        current = set(pick_hot + pick_cold)
+        while len(current) < total_needed:
+            current.add(random.randint(1, pool))
 
-                    tickets.add(tuple(sorted(current)))
+        # Convert all to int here
+        ticket_tuple = tuple(sorted(int(x) for x in current))
 
-                return list(tickets)
+        tickets.add(ticket_tuple)
+
+    return list(tickets)
+
 
             tickets = generate_tickets(hot, cold, n_tickets)
 
