@@ -6,10 +6,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 from itertools import combinations
 import numpy as np
-import io
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
@@ -134,7 +134,7 @@ def generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums):
     return list(tickets)
 
 @st.cache_data
-def build_prediction_features(numbers_df, max_draws=500):
+def build_prediction_features(numbers_df, max_draws=100):
     numbers_df = numbers_df.tail(max_draws).reset_index(drop=True)
     total_draws = len(numbers_df)
     df_feat = []
@@ -168,14 +168,22 @@ def build_prediction_features(numbers_df, max_draws=500):
     return df_feat
 
 @st.cache_data
-def train_predictive_model(df_feat):
+def train_predictive_model(df_feat, model_type="random_forest"):
     feature_cols = ['gap', 'frequency']
     X = df_feat[feature_cols]
     y = df_feat['appeared_next']
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-    model = LogisticRegression(max_iter=1000)
+    if model_type == "logistic":
+        model = LogisticRegression(max_iter=1000)
+    elif model_type == "random_forest":
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+    elif model_type == "gradient_boosting":
+        model = GradientBoostingClassifier(n_estimators=100, random_state=42)
+    else:
+        raise ValueError("Unsupported model type")
+
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
@@ -254,91 +262,65 @@ if uploaded_file:
             numbers_df_with_dates['Year'] = numbers_df_with_dates['Date'].dt.year
 
             years = sorted(numbers_df_with_dates['Year'].unique())
-            numbers = list(range(1, 50))
-            freq_matrix = pd.DataFrame(0, index=numbers, columns=years)
+            selected_years = st.multiselect("Select years to visualize number frequencies", years, default=years[-5:])
 
-            for year in years:
-                yearly_data = numbers_df_with_dates[numbers_df_with_dates['Year'] == year]
-                nums = yearly_data.iloc[:, 0:6].values.flatten()
-                counts = Counter(nums)
-                for num in counts:
-                    freq_matrix.at[num, year] = counts[num]
+            if selected_years:
+                subset = numbers_df_with_dates[numbers_df_with_dates['Year'].isin(selected_years)]
+                freq_by_year = pd.DataFrame()
+                for y in selected_years:
+                    draws = subset[subset['Year'] == y]
+                    counts = Counter(draws.values.flatten())
+                    freq_by_year[y] = pd.Series({k: counts.get(k,0) for k in range(1,50)})
+                freq_by_year = freq_by_year.fillna(0)
 
-            st.subheader("Heatmap: Number Frequency by Year")
-            fig_heat, ax = plt.subplots(figsize=(15, 10))
-            sns.heatmap(freq_matrix, cmap="YlGnBu", linewidths=0.5, ax=ax, cbar_kws={'label': 'Frequency'})
-            ax.set_xlabel("Year")
-            ax.set_ylabel("Number")
-            st.pyplot(fig_heat)
+                plt.figure(figsize=(12,6))
+                sns.heatmap(freq_by_year.T, cmap="YlGnBu", cbar=True)
+                st.pyplot(plt.gcf())
 
-            st.subheader("Frequency Trend of Selected Numbers Over Years")
-            selected_numbers = st.multiselect("Select numbers (1 to 49) for trend", options=range(1, 50), default=[7,14,23])
-            if selected_numbers:
-                trend_df = freq_matrix.loc[selected_numbers].transpose()
-                fig_line = px.line(trend_df, x=trend_df.index, y=trend_df.columns,
-                                   labels={"x": "Year", "value": "Frequency"},
-                                   title="Number Frequency Trends Over Years")
-                st.plotly_chart(fig_line, use_container_width=True)
+        st.subheader("Ticket Generation")
+        budget = st.slider("Budget in $", min_value=3, max_value=300, value=30, step=3)
+        price_per_ticket = 3
+        n_tickets = budget // price_per_ticket
 
-        st.subheader("Predictive Model: Next Draw Number Likelihood")
-        with st.spinner("Training predictive model..."):
-            df_feat = build_prediction_features(numbers_df, max_draws=500)
-            model, acc = train_predictive_model(df_feat)
+        gen_method = st.selectbox("Ticket generation method", ["Hot/Cold Weighted", "Frequency Weighted", "Smart Generation"])
+
+        if gen_method == "Hot/Cold Weighted":
+            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+        elif gen_method == "Frequency Weighted":
+            tickets = generate_tickets_weighted(counter, n_tickets)
+        else:
+            fixed_nums = st.multiselect("Fix numbers to include in tickets (optional)", options=list(range(1, 50)))
+            exclude_nums = set()
+            if st.checkbox("Exclude numbers drawn in last 2 draws?"):
+                exclude_nums = set(numbers_df.tail(2).values.flatten())
+            overdue_nums = set([num for num, gap in gaps.items() if gap >= overdue_threshold])
+            tickets = generate_smart_tickets(n_tickets, set(fixed_nums), exclude_nums, overdue_nums)
+
+        st.write(f"Generated Tickets ({len(tickets)}):")
+        for i, t in enumerate(tickets, 1):
+            st.write(f"{i}: {t}")
+
+        st.subheader("Predictive Model for Next Draw Number Likelihood")
+
+        model_choice = st.selectbox(
+            "Choose predictive model",
+            ["random_forest", "gradient_boosting", "logistic"]
+        )
+
+        with st.spinner(f"Training {model_choice.replace('_', ' ').title()} model on last 100 draws..."):
+            df_feat = build_prediction_features(numbers_df, max_draws=100)
+            model, acc = train_predictive_model(df_feat, model_type=model_choice)
 
         st.write(f"Model trained. Accuracy on test set: **{acc:.2%}**")
 
         probs = predict_next_draw_probs(model, numbers_df)
         probs_df = pd.DataFrame(list(probs.items()), columns=["Number", "Probability"]).sort_values(by="Probability", ascending=False)
 
-        fig_pred = px.bar(probs_df, x="Number", y="Probability", title="Predicted Probability of Number in Next Draw", color="Probability", color_continuous_scale="Viridis")
+        fig_pred = px.bar(probs_df, x="Number", y="Probability", title=f"Predicted Probability of Number in Next Draw ({model_choice.replace('_', ' ').title()})", color="Probability", color_continuous_scale="Viridis")
         st.plotly_chart(fig_pred, use_container_width=True)
 
-        budget = st.slider("Budget ($)", min_value=3, max_value=300, value=30, step=3)
-        price_per_ticket = 3
-        n_tickets = budget // price_per_ticket
-
-        strategy = st.radio("Ticket generation strategy:", ["Hot/Cold mix", "Weighted by Frequency", "Advanced"])
-
-        tickets = []
-        if strategy == "Hot/Cold mix":
-            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-        elif strategy == "Weighted by Frequency":
-            tickets = generate_tickets_weighted(counter, n_tickets)
-        else:
-            exclude_last_n = st.number_input("Exclude last N draws", min_value=0, max_value=30, value=2)
-            recent_numbers = set(numbers_df.tail(exclude_last_n).values.flatten()) if exclude_last_n > 0 else set()
-            fixed_numbers_input = st.text_input("Fixed numbers (comma-separated)", value="")
-            fixed_numbers = set(int(x.strip()) for x in fixed_numbers_input.split(",") if x.strip().isdigit())
-            due_numbers = set(gaps_df[gaps_df["Gap"] >= overdue_threshold]["Number"].tolist())
-            if st.button("Generate Advanced Tickets"):
-                tickets = generate_smart_tickets(n_tickets, fixed_numbers, recent_numbers, due_numbers)
-
-        if tickets:
-            st.subheader("Generated Tickets:")
-            for i, t in enumerate(tickets, 1):
-                st.write(f"{i}: {t}")
-
-            csv_buffer = io.StringIO()
-            pd.DataFrame(tickets, columns=[f"Num {i+1}" for i in range(6)]).to_csv(csv_buffer, index=False)
-            st.download_button(
-                label="Download Tickets (CSV)",
-                data=csv_buffer.getvalue(),
-                file_name="generated_tickets.csv",
-                mime="text/csv"
-            )
-
-        st.subheader("Lottery Probability")
-        st.write("""
-        **P(E) = Favorable Outcomes / Total Possible Outcomes**
-
-        For Lotto 6/49:
-        - Total combinations = C(49, 6) = 13,983,816
-        - Your ticket matches 1 combination.
-        - **P(E)** = 1 / 13,983,816 ≈ 0.00000715%.
-        """)
-
     except Exception as e:
-        st.error(f"Error reading CSV: {e}")
+        st.error(f"Error processing CSV: {e}")
 
 else:
-    st.info("Please upload a CSV file with draw numbers.")
+    st.info("Please upload a CSV file with Lotto 6/49 draws.")
