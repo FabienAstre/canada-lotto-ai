@@ -226,10 +226,29 @@ if uploaded_file:
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
 
-        st.subheader("Hot Numbers:")
-        st.write(", ".join(map(str, hot)))
-        st.subheader("Cold Numbers:")
-        st.write(", ".join(map(str, cold)))
+        pair_counts = compute_pair_frequencies(numbers_df)
+        pair_freq = {f"{x[0]}-{x[1]}": pair_counts[x] for x in pair_counts}
+
+        gaps = compute_number_gaps(numbers_df, dates)
+
+        st.subheader("Number Frequency")
+        fig = px.bar(x=list(counter.keys()), y=list(counter.values()), labels={'x': 'Number', 'y': 'Frequency'})
+        st.plotly_chart(fig)
+
+        st.subheader("Number Pair Frequency")
+        pair_freq_sorted = sorted(pair_freq.items(), key=lambda x: x[1], reverse=True)[:10]
+        pair_freq_data = pd.DataFrame(pair_freq_sorted, columns=['Pair', 'Frequency'])
+        st.dataframe(pair_freq_data)
+
+        st.subheader("Number Gaps")
+        gap_data = pd.DataFrame(list(gaps.items()), columns=["Number", "Gap"]).sort_values(by="Gap", ascending=False)
+        st.dataframe(gap_data)
+
+        st.subheader("Prediction Model")
+        st.write("Training predictive model...")
+        df_feat = build_prediction_features(numbers_df, bonus_series)
+        model, acc = train_predictive_model(df_feat)
+        st.write(f"Model accuracy: {acc:.2f}")
 
         st.subheader("Ticket Generation")
         strategy = st.selectbox("Select ticket generation strategy", ["Hot/Cold Mix", "Weighted by Frequency", "Advanced"])
@@ -240,8 +259,10 @@ if uploaded_file:
             tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
         elif strategy == "Weighted by Frequency":
             tickets = generate_tickets_weighted(counter, n_tickets)
-        else:
+        elif strategy == "Advanced":
             st.write("Advanced Strategy is under construction.")
+            tickets = []
+        else:
             tickets = []
 
         st.subheader("Generated Tickets:")
