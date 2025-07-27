@@ -210,7 +210,6 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     try:
-        # Read the CSV into a DataFrame
         df = pd.read_csv(uploaded_file)
 
         # Reverse the DataFrame rows (from bottom to top)
@@ -234,5 +233,45 @@ if uploaded_file:
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
 
-        # Continue with the rest of the code...
-        # All code below will remain unchanged.
+        freq_df = pd.DataFrame({"Number": list(range(1, 50))})
+        freq_df['Frequency'] = freq_df['Number'].apply(lambda x: counter[x])
+        fig = px.bar(freq_df, x="Number", y="Frequency", labels={"Number": "Lotto Number", "Frequency": "Draw Frequency"})
+        st.plotly_chart(fig)
+
+        gaps = compute_number_gaps(numbers_df, dates)
+        gap_df = pd.DataFrame(list(gaps.items()), columns=["Number", "Last Draw Gap"])
+        gap_df = gap_df.sort_values(by="Last Draw Gap", ascending=False)
+        st.subheader("Number Gap (Last Draw):")
+        st.write(gap_df.head(20))
+
+        # Optionally generate and display tickets
+        n_tickets = st.slider("How many tickets to generate?", 1, 100, 5)
+        ticket_type = st.radio("Ticket generation type:", ["Hot/Cold", "Weighted", "Smart"])
+        
+        if ticket_type == "Hot/Cold":
+            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+        elif ticket_type == "Weighted":
+            tickets = generate_tickets_weighted(counter, n_tickets)
+        else:
+            exclude_nums = set(st.multiselect("Exclude numbers", list(range(1, 50))))
+            fixed_nums = set(st.multiselect("Fixed numbers", list(range(1, 50))))
+            due_nums = set(st.multiselect("Due numbers", list(range(1, 50))))
+            tickets = generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums)
+
+        st.subheader("Generated Tickets:")
+        st.write(tickets)
+        
+        # Prediction Model
+        st.subheader("Prediction Model")
+        model, acc = train_predictive_model(build_prediction_features(numbers_df))
+        st.write(f"Model accuracy: {acc:.2%}")
+
+        st.write("Next Draw Probabilities (Higher = More Likely to Appear):")
+        prob_df = pd.DataFrame.from_dict(predict_next_draw_probs(model, numbers_df), orient="index", columns=["Probability"])
+        prob_df.sort_values(by="Probability", ascending=False, inplace=True)
+        st.write(prob_df.head(20))
+
+    except Exception as e:
+        st.error(f"Error processing CSV: {e}")
+else:
+    st.info("Please upload a CSV file with draw numbers.")
