@@ -6,20 +6,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 from itertools import combinations
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from datetime import datetime
 
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
 st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyze historical draws, identify patterns, generate tickets, see predictions.")
+st.write("Analyse des tirages réels, statistiques et génération de tickets.")
 
-def to_py_ticket(ticket):
-    return tuple(sorted(int(x) for x in ticket))
+uploaded_file = st.file_uploader(
+    "Importer un fichier CSV Lotto 6/49",
+    type=["csv"],
+    help="CSV avec colonnes: DATE (optionnel), NUMBER DRAWN 1 à NUMBER DRAWN 6 et BONUS NUMBER",
+)
 
 def extract_numbers_and_bonus(df):
     required_main_cols = [
@@ -45,6 +43,7 @@ def extract_numbers_and_bonus(df):
         if not bonus_series.between(1, 49).all():
             bonus_series = None
 
+    # Optional date column for gap analysis
     date_col = None
     for col_candidate in ['DATE', 'Draw Date', 'Draw_Date', 'Date']:
         if col_candidate in df.columns:
@@ -60,24 +59,14 @@ def extract_numbers_and_bonus(df):
 
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
 
-@st.cache_data
-def compute_frequencies(numbers_df):
-    all_numbers = numbers_df.values.flatten()
-    return Counter(all_numbers)
-
-@st.cache_data
-def compute_pair_frequencies(numbers_df, limit=500):
-    pair_counts = Counter()
-    df_subset = numbers_df.tail(limit)
-    for _, row in df_subset.iterrows():
-        pairs = combinations(sorted(row.values), 2)
-        pair_counts.update(pairs)
-    return pair_counts
-
 def compute_number_gaps(numbers_df, dates=None):
+    # Compute how many draws since each number last appeared
+
     last_seen = {num: -1 for num in range(1, 50)}
     gaps = {num: None for num in range(1, 50)}
 
+    # We assume numbers_df is sorted oldest to newest (check and sort if needed)
+    # If dates given, use them for ordering; else use index
     if dates is not None:
         order = dates.argsort()
         numbers_df = numbers_df.iloc[order].reset_index(drop=True)
@@ -85,290 +74,196 @@ def compute_number_gaps(numbers_df, dates=None):
         numbers_df = numbers_df.reset_index(drop=True)
 
     for idx, row in numbers_df.iterrows():
+        for num in range(1, 50):
+            if last_seen[num] == -1:
+                # Never seen before
+                gaps[num] = idx  # Number of draws since start (or could mark as large)
+            else:
+                gaps[num] = idx - last_seen[num]
         for n in row.values:
             last_seen[n] = idx
 
+    # After last draw, calculate gap for each number as (total_draws - last_seen_index)
     total_draws = len(numbers_df)
     for num in range(1, 50):
-        gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
+        if last_seen[num] != -1:
+            gaps[num] = total_draws - 1 - last_seen[num]
+        else:
+            gaps[num] = total_draws  # never appeared, max gap
+
     return gaps
-
-def generate_tickets_hot_cold(hot, cold, n_tickets):
-    tickets = set()
-    while len(tickets) < n_tickets:
-        n_hot = random.randint(2, min(4, len(hot)))
-        n_cold = random.randint(2, min(4, len(cold)))
-        pick_hot = random.sample(hot, n_hot)
-        pick_cold = random.sample(cold, n_cold)
-        current = set(pick_hot + pick_cold)
-        while len(current) < 6:
-            current.add(random.randint(1, 49))
-        tickets.add(to_py_ticket(current))
-    return list(tickets)
-
-def generate_tickets_weighted(counter, n_tickets):
-    numbers = np.array(range(1, 50))
-    freqs = np.array([counter.get(num, 0) for num in numbers])
-    weights = freqs + 1
-    tickets = set()
-    while len(tickets) < n_tickets:
-        ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
-        tickets.add(to_py_ticket(ticket_np))
-    return list(tickets)
-
-def generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums):
-    tickets = set()
-    pool = set(range(1, 50)) - exclude_nums - fixed_nums
-    while len(tickets) < n_tickets:
-        ticket = set(fixed_nums)
-        for num in (due_nums - ticket):
-            if len(ticket) < 6:
-                ticket.add(num)
-        remaining_pool = list(pool - ticket)
-        random.shuffle(remaining_pool)
-        for num in remaining_pool:
-            if len(ticket) >= 6:
-                break
-            ticket.add(num)
-        tickets.add(to_py_ticket(ticket))
-    return list(tickets)
-
-@st.cache_data
-def build_prediction_features(numbers_df, max_draws=100):
-    numbers_df = numbers_df.tail(max_draws).reset_index(drop=True)
-    total_draws = len(numbers_df)
-    df_feat = []
-    last_seen_draw = {num: -1 for num in range(1, 50)}
-    freq_counter = Counter()
-
-    for idx, row in numbers_df.iterrows():
-        current_numbers = set(row.values)
-        for num in range(1, 50):
-            gap = idx - last_seen_draw[num] if last_seen_draw[num] != -1 else total_draws
-            freq = freq_counter[num]
-            df_feat.append({
-                "draw_index": idx,
-                "number": num,
-                "gap": gap,
-                "frequency": freq,
-                "appeared_next": None
-            })
-        for num in current_numbers:
-            last_seen_draw[num] = idx
-            freq_counter[num] += 1
-
-    df_feat = pd.DataFrame(df_feat)
-
-    df_feat['appeared_next'] = 0
-    for idx in range(total_draws-1):
-        appeared_next_vals = set(numbers_df.iloc[idx+1].values)
-        mask = df_feat['draw_index'] == idx
-        df_feat.loc[mask, 'appeared_next'] = df_feat.loc[mask, 'number'].apply(lambda x: 1 if x in appeared_next_vals else 0)
-
-    return df_feat
-
-@st.cache_data
-def train_predictive_model(df_feat, model_type="random_forest"):
-    feature_cols = ['gap', 'frequency']
-    X = df_feat[feature_cols]
-    y = df_feat['appeared_next']
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-
-    if model_type == "logistic":
-        model = LogisticRegression(max_iter=1000)
-    elif model_type == "random_forest":
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-    elif model_type == "gradient_boosting":
-        model = GradientBoostingClassifier(n_estimators=100, random_state=42)
-    else:
-        raise ValueError("Unsupported model type")
-
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    return model, acc
-
-def predict_next_draw_probs(model, numbers_df):
-    total_draws = len(numbers_df)
-    last_seen_draw = {num: -1 for num in range(1, 50)}
-    freq_counter = Counter()
-
-    for idx, row in numbers_df.iterrows():
-        current_numbers = set(row.values)
-        for num in current_numbers:
-            last_seen_draw[num] = idx
-            freq_counter[num] += 1
-
-    features = []
-    for num in range(1, 50):
-        gap = total_draws - 1 - last_seen_draw[num] if last_seen_draw[num] != -1 else total_draws
-        freq = freq_counter[num]
-        features.append([gap, freq])
-
-    X_pred = pd.DataFrame(features, columns=['gap', 'frequency'])
-    probs = model.predict_proba(X_pred)[:,1]
-    return dict(zip(range(1, 50), probs))
-
-def get_top_ticket_from_probs(probs_dict):
-    sorted_nums = sorted(probs_dict.items(), key=lambda x: x[1], reverse=True)
-    top6 = tuple(num for num, prob in sorted_nums[:6])
-    return top6
-
-def get_top_bonus_from_probs(probs_dict, exclude_nums):
-    filtered = {num: prob for num, prob in probs_dict.items() if num not in exclude_nums}
-    if not filtered:
-        return None
-    top_bonus = max(filtered, key=filtered.get)
-    return top_bonus
-
-uploaded_file = st.file_uploader(
-    "Upload a Lotto 6/49 CSV file",
-    type=["csv"],
-    help="CSV with columns: NUMBER DRAWN 1 to NUMBER DRAWN 6 and BONUS NUMBER",
-)
 
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
-        st.subheader("Uploaded Data (All draws):")
-        st.dataframe(df, height=500)  # Shows all draws with scroll
+        st.subheader("Données complètes importées :")
+        st.dataframe(df)
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
+
         if numbers_df is None:
-            st.error("CSV must have columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
-            st.stop()
-
-        counter = compute_frequencies(numbers_df)
-        hot = [num for num, _ in counter.most_common(6)]
-        cold = [num for num, _ in counter.most_common()[:-7:-1]]
-
-        st.subheader("Hot Numbers:")
-        st.write(", ".join(map(str, hot)))
-        st.subheader("Cold Numbers:")
-        st.write(", ".join(map(str, cold)))
-
-        freq_df = pd.DataFrame({"Number": list(range(1, 50))})
-        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
-        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", title="Number Frequency", color_continuous_scale="Blues")
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("Number Pair Frequency (last 500 draws)")
-        pair_counts = compute_pair_frequencies(numbers_df, limit=500)
-        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
-        pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count", color_continuous_scale="Viridis",
-                           title="Number Pair Frequencies")
-        fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_pairs, use_container_width=True)
-
-        st.subheader("Number Gap Analysis")
-        gaps = compute_number_gaps(numbers_df, dates)
-        overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", 0, 100, 27)
-        overdue_nums = {num: gap for num, gap in gaps.items() if gap >= overdue_threshold}
-        if overdue_nums:
-            gap_df = pd.DataFrame.from_dict(overdue_nums, orient='index', columns=['Gap (draws since last appearance)']).reset_index()
-            gap_df.rename(columns={'index': 'Number'}, inplace=True)
-            st.dataframe(gap_df)
+            st.error("Le fichier CSV doit contenir les 6 colonnes principales 'NUMBER DRAWN 1' à 'NUMBER DRAWN 6' avec des nombres valides entre 1 et 49.")
         else:
-            st.write("No overdue numbers with gap above threshold.")
+            st.subheader("Derniers tirages :")
+            st.dataframe(numbers_df.tail(30).reset_index(drop=True))
 
-        st.subheader("Yearly Number Frequency Heatmap")
-        if dates is not None:
-            numbers_df_with_dates = numbers_df.copy()
-            numbers_df_with_dates['Year'] = dates.dt.year.values[:len(numbers_df)]
-            years = sorted(numbers_df_with_dates['Year'].unique())
-            selected_years = st.multiselect("Select years to visualize", years, default=years[-5:])
-            if selected_years:
-                subset = numbers_df_with_dates[numbers_df_with_dates['Year'].isin(selected_years)]
-                freq_by_year = pd.DataFrame()
-                for y in selected_years:
-                    draws = subset[subset['Year'] == y]
-                    counts = Counter(draws.values.flatten())
-                    freq_by_year[y] = pd.Series({k: counts.get(k, 0) for k in range(1, 50)})
-                freq_by_year = freq_by_year.fillna(0)
-                plt.figure(figsize=(12,6))
-                sns.heatmap(freq_by_year.T, cmap="YlGnBu", cbar=True)
-                st.pyplot(plt.gcf())
+            if bonus_series is not None:
+                st.subheader("Bonus Numbers (derniers tirages) :")
+                st.write(bonus_series.tail(30).to_list())
 
-        st.subheader("Ticket Generation")
-        budget = st.slider("Budget in $", min_value=3, max_value=300, value=30, step=3)
-        price_per_ticket = 3
-        n_tickets = budget // price_per_ticket
+            # Frequency counts for main numbers — all draws
+            all_numbers = numbers_df.values.flatten()
+            counter = Counter(all_numbers)
 
-        gen_method = st.selectbox("Ticket generation method", ["Hot/Cold Weighted", "Frequency Weighted", "Smart Generation"])
+            # Frequency counts for bonus numbers
+            bonus_counter = Counter(bonus_series) if bonus_series is not None else Counter()
 
-        if gen_method == "Hot/Cold Weighted":
-            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-        elif gen_method == "Frequency Weighted":
-            tickets = generate_tickets_weighted(counter, n_tickets)
-        else:
-            fixed_nums = st.multiselect("Fix numbers to include in tickets (optional)", options=list(range(1, 50)))
-            exclude_nums = set()
-            if st.checkbox("Exclude numbers drawn in last 2 draws?"):
-                exclude_nums = set(numbers_df.tail(2).values.flatten())
-            tickets = generate_smart_tickets(n_tickets, set(fixed_nums), exclude_nums, set(overdue_nums.keys()))
+            hot = [num for num, _ in counter.most_common(6)]
+            cold = [num for num, _ in counter.most_common()[:-7:-1]]
 
-        st.write(f"Generated Tickets ({len(tickets)}):")
-        for i, t in enumerate(tickets, 1):
-            st.write(f"{i}: {t}")
+            st.subheader("Numéros chauds :")
+            st.write(", ".join(map(str, hot)))
+            st.subheader("Numéros froids :")
+            st.write(", ".join(map(str, cold)))
 
-        st.subheader("Predictive Models for Next Draw Number Likelihood and Suggested Tickets")
+            if bonus_series is not None:
+                st.subheader("Numéros bonus les plus fréquents :")
+                bonus_hot = [num for num, _ in bonus_counter.most_common(6)]
+                st.write(", ".join(map(str, bonus_hot)))
 
-        models = {
-            "Logistic Regression": "logistic",
-            "Random Forest": "random_forest",
-            "Gradient Boosting": "gradient_boosting"
-        }
+            # Frequency DataFrame for main numbers
+            freq_df = pd.DataFrame({"Numéro": list(range(1, 50))})
+            freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
 
-        tickets_by_model = {}
-        bonus_by_model = {}
+            # Plot main numbers frequency
+            fig = px.bar(
+                freq_df,
+                x="Numéro",
+                y="Fréquence",
+                title="Fréquence des numéros (tous les tirages importés)",
+                labels={"Numéro": "Numéro", "Fréquence": "Nombre d'apparitions"},
+                color="Fréquence",
+                color_continuous_scale="Blues",
+            )
+            fig.update_layout(template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
 
-        for model_name, model_type in models.items():
-            with st.spinner(f"Training {model_name} model on last 100 draws..."):
-                df_feat = build_prediction_features(numbers_df, max_draws=100)
-                model, acc = train_predictive_model(df_feat, model_type=model_type)
+            # Hot vs Cold bar chart
+            hot_df = freq_df[freq_df["Numéro"].isin(hot)]
+            cold_df = freq_df[freq_df["Numéro"].isin(cold)]
 
-            st.write(f"**{model_name}** trained. Accuracy on test set: **{acc:.2%}**")
+            fig2 = go.Figure()
+            fig2.add_trace(go.Bar(x=hot_df["Numéro"], y=hot_df["Fréquence"], name="Numéros chauds", marker_color="red"))
+            fig2.add_trace(go.Bar(x=cold_df["Numéro"], y=cold_df["Fréquence"], name="Numéros froids", marker_color="blue"))
+            fig2.update_layout(
+                barmode="group",
+                title="Comparaison Numéros chauds vs froids",
+                xaxis_title="Numéro",
+                yaxis_title="Fréquence",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
 
-            probs = predict_next_draw_probs(model, numbers_df)
-            probs_df = pd.DataFrame(list(probs.items()), columns=["Number", "Probability"]).sort_values(by="Probability", ascending=False)
+            # --- PAIR FREQUENCY ANALYSIS ---
+            pair_counts = Counter()
+            for _, row in numbers_df.iterrows():
+                pairs = combinations(sorted(row.values), 2)
+                pair_counts.update(pairs)
 
-            fig_pred = px.bar(probs_df, x="Number", y="Probability",
-                              title=f"Predicted Probability of Number in Next Draw ({model_name})",
-                              color="Probability", color_continuous_scale="Viridis")
-            st.plotly_chart(fig_pred, use_container_width=True)
+            top_pairs = pair_counts.most_common(10)
+            pairs_df = pd.DataFrame(top_pairs, columns=["Pair", "Count"])
+            pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
 
-            ticket = get_top_ticket_from_probs(probs)
-            bonus_num = get_top_bonus_from_probs(probs, set(ticket))
-            tickets_by_model[model_name] = ticket
-            bonus_by_model[model_name] = bonus_num
+            st.subheader("Top 10 des paires de numéros les plus fréquentes :")
+            st.dataframe(pairs_df)
 
-        st.subheader("Suggested Tickets from Each Predictive Model")
-        for model_name in models.keys():
-            st.write(f"{model_name}: Main Numbers: {tickets_by_model[model_name]} | Bonus Number: {bonus_by_model[model_name]}")
+            fig_pairs = px.bar(
+                pairs_df,
+                y="Pair",
+                x="Count",
+                orientation='h',
+                title="Fréquence des paires de numéros",
+                labels={"Count": "Nombre d'apparitions", "Pair": "Paire de numéros"},
+                color="Count",
+                color_continuous_scale="Viridis",
+            )
+            fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
+            st.plotly_chart(fig_pairs, use_container_width=True)
 
-        # Combine all predictive tickets into one unique ticket
-        combined_main_numbers = set()
-        combined_bonus_candidates = set()
-        for t in tickets_by_model.values():
-            combined_main_numbers.update(t)
-        for b in bonus_by_model.values():
-            if b is not None:
-                combined_bonus_candidates.add(b)
+            # --- Number Gaps & Patterns ---
+            st.subheader("Analyse des écarts entre apparitions des numéros")
 
-        combined_ticket_main = tuple(sorted(combined_main_numbers))[:6]
-        combined_ticket_bonus = None
-        if combined_bonus_candidates:
-            # Pick bonus number that occurs most frequently among models
-            freq_bonus = Counter(combined_bonus_candidates)
-            combined_ticket_bonus = freq_bonus.most_common(1)[0][0]
+            gaps = compute_number_gaps(numbers_df, dates)
 
-        st.subheader("Combined Ticket from All Predictive Models")
-        st.write(f"Main Numbers: {combined_ticket_main} | Bonus Number: {combined_ticket_bonus}")
+            gaps_df = pd.DataFrame({
+                "Numéro": list(gaps.keys()),
+                "Écarts (nombre de tirages depuis la dernière apparition)": list(gaps.values())
+            })
+
+            # Show the numbers with highest gaps (overdue numbers)
+            overdue_threshold = st.slider(
+                "Seuil d'écart minimum pour considérer un numéro comme 'en retard' (tirages)", min_value=0, max_value=100, value=20)
+
+            overdue_df = gaps_df[gaps_df["Écarts (nombre de tirages depuis la dernière apparition)"] >= overdue_threshold]
+            overdue_df = overdue_df.sort_values(by="Écarts (nombre de tirages depuis la dernière apparition)", ascending=False)
+
+            st.write(f"Numéros en retard (écarts ≥ {overdue_threshold} tirages) :")
+            st.dataframe(overdue_df)
+
+            # Ticket generation settings
+            budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
+            price_per_ticket = 3
+            n_tickets = budget // price_per_ticket
+
+            # Choose ticket generation strategy
+            strategy = st.radio("Choisir la méthode de génération des tickets :", 
+                                ("Hot/Cold mix (original)", "Weighted by Frequency (new)"))
+
+            def generate_tickets_hot_cold(hot, cold, n_tickets):
+                tickets = set()
+                pool = 49
+                total_needed = 6
+
+                while len(tickets) < n_tickets:
+                    n_hot = random.randint(2, min(4, len(hot)))
+                    n_cold = random.randint(2, min(4, len(cold)))
+
+                    pick_hot = random.sample(hot, n_hot)
+                    pick_cold = random.sample(cold, n_cold)
+
+                    current = set(pick_hot + pick_cold)
+                    while len(current) < total_needed:
+                        current.add(random.randint(1, pool))
+
+                    ticket_tuple = tuple(sorted(int(x) for x in current))
+                    tickets.add(ticket_tuple)
+
+                return list(tickets)
+
+            def generate_tickets_weighted(counter, n_tickets):
+                numbers = np.array(range(1, 50))
+                freqs = np.array([counter.get(num, 0) for num in numbers])
+                weights = freqs + 1  # Add 1 to avoid zero weights
+
+                tickets = set()
+                while len(tickets) < n_tickets:
+                    ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
+                    ticket = tuple(sorted(int(x) for x in ticket_np))  # Convert to int to avoid np.int64 print
+                    tickets.add(ticket)
+                return list(tickets)
+
+            # Generate tickets based on strategy
+            if strategy == "Hot/Cold mix (original)":
+                tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+            else:
+                tickets = generate_tickets_weighted(counter, n_tickets)
+
+            st.subheader("Tickets générés :")
+            for i, t in enumerate(tickets, 1):
+                st.write(f"{i}: {t}")
 
     except Exception as e:
-        st.error(f"Error processing CSV: {e}")
+        st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
 
 else:
-    st.info("Please upload a CSV file with Lotto 6/49 draws.")
+    st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
