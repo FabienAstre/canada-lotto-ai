@@ -12,12 +12,17 @@ import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
+# Streamlit page configuration
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
+# Title and Description
 st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
+# Helper Functions
 def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
 
@@ -59,6 +64,20 @@ def extract_numbers_and_bonus(df):
             dates = None
 
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
+
+def load_from_google_sheet(sheet_id, range_name, creds_json):
+    # Load data from Google Sheets using gspread and OAuth2
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_json, scope)
+    client = gspread.authorize(creds)
+    
+    # Open the Google Sheet by ID
+    sheet = client.open_by_key(sheet_id)
+    worksheet = sheet.get_worksheet(0)  # First sheet
+    data = worksheet.get(range_name)  # Get range
+    
+    df = pd.DataFrame(data[1:], columns=data[0])  # Convert to DataFrame
+    return df
 
 @st.cache_data
 def compute_frequencies(numbers_df):
@@ -116,103 +135,16 @@ def generate_tickets_weighted(counter, n_tickets):
         tickets.add(to_py_ticket(ticket_np))
     return list(tickets)
 
-def generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums):
-    tickets = set()
-    pool = set(range(1, 50)) - exclude_nums - fixed_nums
-    while len(tickets) < n_tickets:
-        ticket = set(fixed_nums)
-        for num in (due_nums - ticket):
-            if len(ticket) < 6:
-                ticket.add(num)
-        remaining_pool = list(pool - ticket)
-        random.shuffle(remaining_pool)
-        for num in remaining_pool:
-            if len(ticket) >= 6:
-                break
-            ticket.add(num)
-        tickets.add(to_py_ticket(ticket))
-    return list(tickets)
-
-@st.cache_data
-def build_prediction_features(numbers_df, bonus_series=None, max_draws=500):
-    numbers_df = numbers_df.tail(max_draws).reset_index(drop=True)
-    total_draws = len(numbers_df)
-    df_feat = []
-    last_seen_draw = {num: -1 for num in range(1, 50)}
-    freq_counter = Counter()
-
-    for idx, row in numbers_df.iterrows():
-        current_numbers = set(row.values)
-        for num in range(1, 50):
-            gap = idx - last_seen_draw[num] if last_seen_draw[num] != -1 else total_draws
-            freq = freq_counter[num]
-            # Add bonus number as an additional feature (optional)
-            bonus_gap = (bonus_series.iloc[idx] == num) if bonus_series is not None else 0
-            df_feat.append({
-                "draw_index": idx,
-                "number": num,
-                "gap": gap,
-                "frequency": freq,
-                "appeared_next": None,
-                "bonus_gap": bonus_gap  # Added bonus gap feature
-            })
-        for num in current_numbers:
-            last_seen_draw[num] = idx
-            freq_counter[num] += 1
-
-    df_feat = pd.DataFrame(df_feat)
-
-    df_feat['appeared_next'] = 0
-    for idx in range(total_draws-1):
-        appeared_next_vals = set(numbers_df.iloc[idx+1].values)
-        mask = df_feat['draw_index'] == idx
-        df_feat.loc[mask, 'appeared_next'] = df_feat.loc[mask, 'number'].apply(lambda x: 1 if x in appeared_next_vals else 0)
-
-    return df_feat
-
-@st.cache_data
-def train_predictive_model(df_feat):
-    feature_cols = ['gap', 'frequency', 'bonus_gap']
-    X = df_feat[feature_cols]
-    y = df_feat['appeared_next']
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-
-    model = LogisticRegression(max_iter=1000)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    return model, acc
-
-def predict_next_draw_probs(model, numbers_df):
-    total_draws = len(numbers_df)
-    last_seen_draw = {num: -1 for num in range(1, 50)}
-    freq_counter = Counter()
-
-    for idx, row in numbers_df.iterrows():
-        current_numbers = set(row.values)
-        for num in current_numbers:
-            last_seen_draw[num] = idx
-            freq_counter[num] += 1
-
-    features = []
-    for num in range(1, 50):
-        gap = total_draws - 1 - last_seen_draw[num] if last_seen_draw[num] != -1 else total_draws
-        freq = freq_counter[num]
-        features.append([gap, freq])
-
-    X_pred = pd.DataFrame(features, columns=['gap', 'frequency'])
-    probs = model.predict_proba(X_pred)[:,1]
-    return dict(zip(range(1, 50), probs))
-
+# Streamlit App
 uploaded_file = st.file_uploader(
-    "Upload a Lotto 6/49 CSV file",
+    "Upload a Lotto 6/49 CSV file or Google Sheet Data",
     type=["csv"],
     help="CSV with columns: NUMBER DRAWN 1 to NUMBER DRAWN 6 and BONUS NUMBER",
 )
 
 if uploaded_file:
     try:
+        # Read CSV data
         df = pd.read_csv(uploaded_file)
         st.subheader("Uploaded Data (Last 30 draws):")
         st.dataframe(df.tail(30))
@@ -222,51 +154,43 @@ if uploaded_file:
             st.error("CSV must have columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
             st.stop()
 
+        # Frequency of numbers
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
 
-        pair_counts = compute_pair_frequencies(numbers_df)
-        pair_freq = {f"{x[0]}-{x[1]}": pair_counts[x] for x in pair_counts}
+        st.subheader("Hot Numbers:")
+        st.write(", ".join(map(str, hot)))
+        st.subheader("Cold Numbers:")
+        st.write(", ".join(map(str, cold)))
 
+        # Frequency bar chart
+        freq_df = pd.DataFrame({"Number": list(range(1, 50))})
+        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
+        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", title="Number Frequency", color_continuous_scale="Blues")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Pair Frequency bar chart
+        st.subheader("Number Pair Frequency (last 500 draws)")
+        pair_counts = compute_pair_frequencies(numbers_df, limit=500)
+        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
+        pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
+        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count", color_continuous_scale="Viridis")
+        fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_pairs, use_container_width=True)
+
+        # Number Gap Analysis
+        st.subheader("Number Gap Analysis")
         gaps = compute_number_gaps(numbers_df, dates)
+        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
+        overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
+        st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
 
-        st.subheader("Number Frequency")
-        fig = px.bar(x=list(counter.keys()), y=list(counter.values()), labels={'x': 'Number', 'y': 'Frequency'})
-        st.plotly_chart(fig)
-
-        st.subheader("Number Pair Frequency")
-        pair_freq_sorted = sorted(pair_freq.items(), key=lambda x: x[1], reverse=True)[:10]
-        pair_freq_data = pd.DataFrame(pair_freq_sorted, columns=['Pair', 'Frequency'])
-        st.dataframe(pair_freq_data)
-
-        st.subheader("Number Gaps")
-        gap_data = pd.DataFrame(list(gaps.items()), columns=["Number", "Gap"]).sort_values(by="Gap", ascending=False)
-        st.dataframe(gap_data)
-
-        st.subheader("Prediction Model")
-        st.write("Training predictive model...")
-        df_feat = build_prediction_features(numbers_df, bonus_series)
-        model, acc = train_predictive_model(df_feat)
-        st.write(f"Model accuracy: {acc:.2f}")
-
-        st.subheader("Ticket Generation")
-        strategy = st.selectbox("Select ticket generation strategy", ["Hot/Cold Mix", "Weighted by Frequency", "Advanced"])
-
-        n_tickets = st.number_input("Number of tickets", min_value=1, max_value=100, value=5, step=1)
-
-        if strategy == "Hot/Cold Mix":
-            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-        elif strategy == "Weighted by Frequency":
-            tickets = generate_tickets_weighted(counter, n_tickets)
-        elif strategy == "Advanced":
-            st.write("Advanced Strategy is under construction.")
-            tickets = []
-        else:
-            tickets = []
-
-        st.subheader("Generated Tickets:")
-        st.write(tickets)
+        # Advanced ticket generation, predictions, etc.
+        # You can add that section here if needed...
 
     except Exception as e:
-        st.error(f"Error processing the file: {e}")
+        st.error(f"Error reading CSV: {e}")
+
+else:
+    st.info("Please upload a CSV file with draw numbers.")
