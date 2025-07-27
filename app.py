@@ -228,4 +228,42 @@ if uploaded_file:
                     n_hot = random.randint(2, min(4, len(hot)))
                     n_cold = random.randint(2, min(4, len(cold)))
 
-                    p
+                    pick_hot = random.sample(hot, n_hot)
+                    pick_cold = random.sample(cold, n_cold)
+
+                    current = set(pick_hot + pick_cold)
+                    while len(current) < total_needed:
+                        current.add(random.randint(1, pool))
+
+                    ticket_tuple = tuple(sorted(int(x) for x in current))
+                    tickets.add(ticket_tuple)
+
+                return list(tickets)
+
+            def generate_tickets_weighted(counter, n_tickets):
+                numbers = np.array(range(1, 50))
+                freqs = np.array([counter.get(num, 0) for num in numbers])
+                weights = freqs + 1  # Add 1 to avoid zero weights
+
+                tickets = set()
+                while len(tickets) < n_tickets:
+                    ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
+                    ticket = tuple(sorted(int(x) for x in ticket_np))  # Convert to int to avoid np.int64 print
+                    tickets.add(ticket)
+                return list(tickets)
+
+            # Generate tickets based on strategy
+            if strategy == "Hot/Cold mix (original)":
+                tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+            else:
+                tickets = generate_tickets_weighted(counter, n_tickets)
+
+            st.subheader("Tickets générés :")
+            for i, t in enumerate(tickets, 1):
+                st.write(f"{i}: {t}")
+
+    except Exception as e:
+        st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
+
+else:
+    st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
