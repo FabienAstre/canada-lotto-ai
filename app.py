@@ -16,7 +16,7 @@ from sklearn.metrics import accuracy_score
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
 st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyze historical draws, identify patterns, generate tickets, see predictions, and estimate prizes.")
+st.write("Analyze historical draws, identify patterns, generate tickets, see predictions.")
 
 def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
@@ -338,43 +338,14 @@ if uploaded_file:
         for model_name, ticket in tickets_by_model.items():
             st.write(f"{model_name}: {ticket}")
 
-        # === Prize info ===
-        st.subheader("🎁 Canada Lotto 6/49 Prize Tiers")
-        st.markdown("""
-        | Matched Numbers                | Prize Tier           | Typical Prize                     |
-        |-------------------------------|----------------------|----------------------------------|
-        | 6 main numbers                 | Jackpot              | Jackpot (varies; millions CAD)   |
-        | 5 main numbers + bonus number  | Second Prize         | Usually hundreds of thousands CAD|
-        | 5 main numbers                 | Third Prize          | Usually several thousand CAD      |
-        | 4 main numbers                 | Fourth Prize         | Typically a few hundred CAD       |
-        | 3 main numbers                 | Fifth Prize          | Usually a fixed amount (e.g., $10)|
-        | 2 main numbers + bonus number  | Sixth Prize          | Small prize (varies)              |
+        # Combine all predictive tickets into one unique ticket
+        combined_numbers = set()
+        for t in tickets_by_model.values():
+            combined_numbers.update(t)
+        combined_ticket = tuple(sorted(combined_numbers))[:6]  # Take top 6 numbers if more than 6
 
-        *Note: Jackpot starts at several million CAD and rolls over if no winner.
-        """)
-
-        st.subheader("🎯 Prize Calculator")
-        matched_main = st.number_input("How many main numbers did you match? (0-6)", min_value=0, max_value=6, value=0, step=1)
-        matched_bonus = st.checkbox("Did you also match the bonus number?")
-
-        def calculate_prize(m_main, m_bonus):
-            if m_main == 6:
-                return "Jackpot - varies, usually millions CAD"
-            elif m_main == 5 and m_bonus:
-                return "Second Prize - usually hundreds of thousands CAD"
-            elif m_main == 5:
-                return "Third Prize - usually several thousand CAD"
-            elif m_main == 4:
-                return "Fourth Prize - typically a few hundred CAD"
-            elif m_main == 3:
-                return "Fifth Prize - usually a fixed amount, around $10"
-            elif m_main == 2 and m_bonus:
-                return "Sixth Prize - small prize, varies"
-            else:
-                return "No prize for this combination"
-
-        prize_text = calculate_prize(matched_main, matched_bonus)
-        st.markdown(f"### Estimated Prize: **{prize_text}**")
+        st.subheader("Combined Ticket from All Predictive Models")
+        st.write(combined_ticket)
 
     except Exception as e:
         st.error(f"Error processing CSV: {e}")
