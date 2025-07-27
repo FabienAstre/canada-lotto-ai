@@ -5,3 +5,5 @@ requests
 matplotlib
 plotly
 numpy
+seaborn
+scikit-learn
