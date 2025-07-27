@@ -21,7 +21,6 @@ def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
 
 def extract_numbers_and_bonus(df):
-    # Define the expected column names for the main numbers (6 numbers) and the bonus
     required_main_cols = [
         "NUMBER DRAWN 1",
         "NUMBER DRAWN 2",
@@ -32,37 +31,38 @@ def extract_numbers_and_bonus(df):
     ]
     bonus_col = "BONUS NUMBER"
 
-    # Check if the required main columns are present, otherwise return None
+    # Ensure all required columns exist
     for col in required_main_cols:
         if col not in df.columns:
             st.error(f"Missing required column: {col}. Please ensure the file has 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6'.")
             return None, None, None
 
-    # Check if values are within the expected range (1-49)
+    # Check for invalid values and clean them
     for col in required_main_cols:
         if not df[col].between(1, 49).all():
-            st.error(f"Some values in '{col}' are out of the valid range (1-49). Please clean the data.")
-            return None, None, None
-    
-    # Extract the main numbers and bonus number columns, convert to numeric and handle errors
-    main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
-    
-    # If there's a bonus number column, validate and extract it
+            st.warning(f"Some values in '{col}' are out of the valid range (1-49). Cleaning data...")
+            df[col] = pd.to_numeric(df[col], errors='coerce')  # Convert invalid values to NaN
+            df = df.dropna(subset=[col])  # Drop rows with NaN in the number columns
+
+    # Clean the bonus column if it exists
     bonus_series = None
     if bonus_col in df.columns:
-        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
-        if not bonus_series.between(1, 49).all():
-            st.error(f"Some values in '{bonus_col}' are out of the valid range (1-49).")
-            return None, None, None
+        if not df[bonus_col].between(1, 49).all():
+            st.warning(f"Some values in '{bonus_col}' are out of the valid range (1-49). Cleaning data...")
+            df[bonus_col] = pd.to_numeric(df[bonus_col], errors='coerce')  # Convert invalid bonus values to NaN
+            df = df.dropna(subset=[bonus_col])  # Drop rows with NaN in the bonus column
+        bonus_series = df[bonus_col]
 
-    # Try to find the date column
+    # Ensure that all the drawn numbers are within the valid range (1-49)
+    main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
+
+    # Handle dates (optional)
     date_col = None
     for col_candidate in ['DATE', 'Draw Date', 'Draw_Date', 'Date']:
         if col_candidate in df.columns:
             date_col = col_candidate
             break
 
-    # Extract dates if found
     dates = None
     if date_col:
         try:
@@ -71,6 +71,7 @@ def extract_numbers_and_bonus(df):
             dates = None
 
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
+
 
 @st.cache_data
 def compute_frequencies(numbers_df):
