@@ -2,13 +2,10 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 import random
-import plotly.express as px
-import plotly.graph_objects as go
-from itertools import combinations
 import numpy as np
 import io
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.express as px
+from itertools import combinations
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -74,25 +71,6 @@ def compute_pair_frequencies(numbers_df, limit=500):
         pair_counts.update(pairs)
     return pair_counts
 
-def compute_number_gaps(numbers_df, dates=None):
-    last_seen = {num: -1 for num in range(1, 50)}
-    gaps = {num: None for num in range(1, 50)}
-
-    if dates is not None:
-        order = dates.argsort()
-        numbers_df = numbers_df.iloc[order].reset_index(drop=True)
-    else:
-        numbers_df = numbers_df.reset_index(drop=True)
-
-    for idx, row in numbers_df.iterrows():
-        for n in row.values:
-            last_seen[n] = idx
-
-    total_draws = len(numbers_df)
-    for num in range(1, 50):
-        gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
-    return gaps
-
 def generate_tickets_hot_cold(hot, cold, n_tickets):
     tickets = set()
     while len(tickets) < n_tickets:
@@ -113,22 +91,8 @@ def generate_tickets_weighted(counter, n_tickets):
     tickets = set()
     while len(tickets) < n_tickets:
         ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
-        tickets.add(to_py_ticket(ticket_np.astype(int)))  # Convert np.int64 to int
+        tickets.add(to_py_ticket(ticket_np))
     return list(tickets)
-
-def generate_tickets_based_on_model(probs, n_tickets):
-    numbers = list(range(1, 50))  # All numbers 1 to 49
-    weights = np.array([probs.get(num, 0) for num in numbers])  # Get the predicted probabilities for each number
-    weights = weights / weights.sum()  # Normalize the weights to make sure they sum to 1
-    
-    tickets = set()
-    while len(tickets) < n_tickets:
-        ticket = np.random.choice(numbers, 6, replace=False, p=weights)  # Randomly select 6 numbers
-        ticket = tuple(sorted(int(num) for num in ticket))  # Convert np.int64 to int here
-        tickets.add(ticket)  # Store the ticket
-        
-    return list(tickets)
-
 
 @st.cache_data
 def build_prediction_features(numbers_df, max_draws=500):
@@ -199,6 +163,41 @@ def predict_next_draw_probs(model, numbers_df):
     probs = model.predict_proba(X_pred)[:,1]
     return dict(zip(range(1, 50), probs))
 
+# Monte Carlo Simulation
+def monte_carlo_simulation(ticket_generation_fn, n_simulations, n_tickets):
+    results = {"win_count": 0, "draws": []}
+    for _ in range(n_simulations):
+        drawn_numbers = set(random.sample(range(1, 50), 6))
+        tickets = ticket_generation_fn(n_tickets)
+        for ticket in tickets:
+            if drawn_numbers == set(ticket):
+                results["win_count"] += 1
+                break
+        results["draws"].append(drawn_numbers)
+    return results
+
+# Expected Value (EV) calculation
+def calculate_ev():
+    total_combinations = 13983816  # C(49, 6)
+    prize_amount = 5000000  # Example prize amount (Jackpot)
+    ticket_cost = 3  # Ticket cost
+
+    # Probability of winning the jackpot
+    win_probability = 1 / total_combinations
+
+    # Expected value formula
+    ev = (win_probability * prize_amount) - ticket_cost
+    return ev
+
+# User filters
+include_numbers_input = st.text_input("Include specific numbers (comma-separated)", value="")
+exclude_numbers_input = st.text_input("Exclude specific numbers (comma-separated)", value="")
+
+# Parse the inputs into sets of numbers
+include_numbers = set(int(x.strip()) for x in include_numbers_input.split(",") if x.strip().isdigit())
+exclude_numbers = set(int(x.strip()) for x in exclude_numbers_input.split(",") if x.strip().isdigit())
+
+# Upload CSV file
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -226,45 +225,30 @@ if uploaded_file:
         st.write(", ".join(map(str, cold)))
 
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
-        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
+        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
+        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", title="Number Frequency", color_continuous_scale="Blues")
+        st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Frequency of Each Number:")
-        fig = px.bar(freq_df, x="Number", y="Frequency", title="Frequency of Numbers")
-        st.plotly_chart(fig)
+        # Training Model for Prediction
+        df_feat = build_prediction_features(numbers_df)
+        model, accuracy = train_predictive_model(df_feat)
+        st.write(f"Model Accuracy: {accuracy:.2f}")
 
-        st.subheader("Pair Frequency (Last 500 Draws):")
-        pair_counter = compute_pair_frequencies(numbers_df)
-        pair_df = pd.DataFrame(pair_counter.items(), columns=["Pair", "Frequency"])
-        pair_df = pair_df.sort_values(by="Frequency", ascending=False)
-        st.dataframe(pair_df)
+        st.subheader("Predicted Probabilities for Next Draw:")
+        predicted_probs = predict_next_draw_probs(model, numbers_df)
+        sorted_probs = sorted(predicted_probs.items(), key=lambda x: x[1], reverse=True)
+        for num, prob in sorted_probs[:10]:
+            st.write(f"Number {num}: {prob:.4f}")
 
-        st.subheader("Number Gaps (Days Since Last Draw):")
-        gaps = compute_number_gaps(numbers_df, dates)
-        gap_df = pd.DataFrame(gaps.items(), columns=["Number", "Gap"])
-        st.dataframe(gap_df)
+        # Monte Carlo Simulation
+        n_simulations = 10000
+        simulation_results = monte_carlo_simulation(generate_tickets_hot_cold, n_simulations, 5)
+        st.write(f"Monte Carlo Simulations: {n_simulations} draws")
+        st.write(f"Winning tickets: {simulation_results['win_count']} wins")
+        st.write(f"Win probability: {simulation_results['win_count'] / n_simulations * 100:.2f}%")
 
-        st.subheader("Ticket Generation Options:")
-        n_tickets = st.number_input("How many tickets to generate?", min_value=1, max_value=100, value=5)
-
-        ticket_option = st.selectbox("Choose ticket generation strategy:", ("Hot/Cold", "Weighted", "Predictive"))
-
-        if ticket_option == "Hot/Cold":
-            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-        elif ticket_option == "Weighted":
-            tickets = generate_tickets_weighted(counter, n_tickets)
-        else:
-            st.subheader("Training Model...")
-            df_feat = build_prediction_features(numbers_df)
-            model, acc = train_predictive_model(df_feat)
-            st.write(f"Model Accuracy: {acc:.2f}")
-
-            st.subheader("Predicting Next Draw Probabilities...")
-            probs = predict_next_draw_probs(model, numbers_df)
-            tickets = generate_tickets_based_on_model(probs, n_tickets)
-
-        st.subheader("Generated Tickets:")
-        for idx, ticket in enumerate(tickets, 1):
-            st.write(f"{idx}: {ticket}")
-
+        # Expected Value (EV)
+        ev = calculate_ev()
+        st.write(f"Expected Value (EV) of a ticket: ${ev:.2f}")
     except Exception as e:
-        st.error(f"Error processing file: {e}")
+        st.error(f"Error processing the file: {e}")
