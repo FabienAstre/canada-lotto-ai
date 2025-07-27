@@ -13,12 +13,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-# --- Page Setup ---
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
+
 st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
-# --- Helper Functions ---
 def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
 
@@ -134,9 +133,9 @@ def generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums):
         tickets.add(to_py_ticket(ticket))
     return list(tickets)
 
-def build_prediction_features(numbers_df):
-    # Build features per draw per number:
-    # For each draw, create rows for numbers 1-49, feature: appeared in last n draws, gap, freq so far
+@st.cache_data
+def build_prediction_features(numbers_df, max_draws=500):
+    numbers_df = numbers_df.tail(max_draws).reset_index(drop=True)
     total_draws = len(numbers_df)
     df_feat = []
     last_seen_draw = {num: -1 for num in range(1, 50)}
@@ -147,44 +146,29 @@ def build_prediction_features(numbers_df):
         for num in range(1, 50):
             gap = idx - last_seen_draw[num] if last_seen_draw[num] != -1 else total_draws
             freq = freq_counter[num]
-            appeared = 1 if num in current_numbers else 0
             df_feat.append({
                 "draw_index": idx,
                 "number": num,
                 "gap": gap,
                 "frequency": freq,
-                "appeared_next": None  # to fill after
+                "appeared_next": None
             })
-        # Update for next iteration
         for num in current_numbers:
             last_seen_draw[num] = idx
             freq_counter[num] += 1
 
     df_feat = pd.DataFrame(df_feat)
 
-    # Add label: whether number appeared in next draw
-    # Shift appeared column by -1 draw index
     df_feat['appeared_next'] = 0
     for idx in range(total_draws-1):
-        current_draw = idx
-        next_draw = idx + 1
-        # For each number, if it appears in next draw -> 1
-        mask_current = df_feat['draw_index'] == current_draw
-        mask_next = df_feat['draw_index'] == next_draw
-        df_current = df_feat[mask_current]
-        df_next = df_feat[mask_next]
-
-        for num in range(1, 50):
-            appeared_next_val = df_next.loc[df_next['number'] == num, 'frequency'].values
-            # Instead of frequency, we check if appeared next draw (frequency change is cumulative, so check draw itself)
-            # So better to check numbers_df row next_draw for num presence
-            appeared_next_val = 1 if num in set(numbers_df.iloc[next_draw].values) else 0
-            df_feat.loc[(df_feat['draw_index'] == current_draw) & (df_feat['number'] == num), 'appeared_next'] = appeared_next_val
+        appeared_next_vals = set(numbers_df.iloc[idx+1].values)
+        mask = df_feat['draw_index'] == idx
+        df_feat.loc[mask, 'appeared_next'] = df_feat.loc[mask, 'number'].apply(lambda x: 1 if x in appeared_next_vals else 0)
 
     return df_feat
 
+@st.cache_data
 def train_predictive_model(df_feat):
-    # Use features gap, frequency to predict appeared_next
     feature_cols = ['gap', 'frequency']
     X = df_feat[feature_cols]
     y = df_feat['appeared_next']
@@ -198,7 +182,6 @@ def train_predictive_model(df_feat):
     return model, acc
 
 def predict_next_draw_probs(model, numbers_df):
-    # For the latest draw, compute features and predict next draw probabilities per number
     total_draws = len(numbers_df)
     last_seen_draw = {num: -1 for num in range(1, 50)}
     freq_counter = Counter()
@@ -219,7 +202,6 @@ def predict_next_draw_probs(model, numbers_df):
     probs = model.predict_proba(X_pred)[:,1]
     return dict(zip(range(1, 50), probs))
 
-# --- File Upload ---
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -237,7 +219,6 @@ if uploaded_file:
             st.error("CSV must have columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
             st.stop()
 
-        # --- Frequency Analysis ---
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
@@ -247,13 +228,11 @@ if uploaded_file:
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
 
-        # Frequency Chart
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
         freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
         fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", title="Number Frequency", color_continuous_scale="Blues")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Pair frequency chart (last 500 draws)
         st.subheader("Number Pair Frequency (last 500 draws)")
         pair_counts = compute_pair_frequencies(numbers_df, limit=500)
         pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
@@ -262,14 +241,12 @@ if uploaded_file:
         fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
-        # Gap Analysis
         st.subheader("Number Gap Analysis")
         gaps = compute_number_gaps(numbers_df, dates)
         gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
         overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
 
-        # --- Draw Pattern Visualization: Heatmap ---
         if dates is not None:
             numbers_df_with_dates = numbers_df.copy()
             numbers_df_with_dates['Date'] = dates
@@ -294,7 +271,6 @@ if uploaded_file:
             ax.set_ylabel("Number")
             st.pyplot(fig_heat)
 
-            # Line chart of trends for selected numbers
             st.subheader("Frequency Trend of Selected Numbers Over Years")
             selected_numbers = st.multiselect("Select numbers (1 to 49) for trend", options=range(1, 50), default=[7,14,23])
             if selected_numbers:
@@ -304,11 +280,9 @@ if uploaded_file:
                                    title="Number Frequency Trends Over Years")
                 st.plotly_chart(fig_line, use_container_width=True)
 
-        # --- Predictive Model ---
         st.subheader("Predictive Model: Next Draw Number Likelihood")
-
         with st.spinner("Training predictive model..."):
-            df_feat = build_prediction_features(numbers_df)
+            df_feat = build_prediction_features(numbers_df, max_draws=500)
             model, acc = train_predictive_model(df_feat)
 
         st.write(f"Model trained. Accuracy on test set: **{acc:.2%}**")
@@ -319,7 +293,6 @@ if uploaded_file:
         fig_pred = px.bar(probs_df, x="Number", y="Probability", title="Predicted Probability of Number in Next Draw", color="Probability", color_continuous_scale="Viridis")
         st.plotly_chart(fig_pred, use_container_width=True)
 
-        # --- Ticket Generation ---
         budget = st.slider("Budget ($)", min_value=3, max_value=300, value=30, step=3)
         price_per_ticket = 3
         n_tickets = budget // price_per_ticket
@@ -354,7 +327,6 @@ if uploaded_file:
                 mime="text/csv"
             )
 
-        # --- Probability Explanation ---
         st.subheader("Lottery Probability")
         st.write("""
         **P(E) = Favorable Outcomes / Total Possible Outcomes**
