@@ -16,7 +16,7 @@ from sklearn.metrics import accuracy_score
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
 st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
+st.write("Analyze historical draws, identify patterns, generate tickets, see predictions, and estimate prizes.")
 
 def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
@@ -250,92 +250,4 @@ if uploaded_file:
         pair_counts = compute_pair_frequencies(numbers_df, limit=500)
         pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
         pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count", color_continuous_scale="Viridis")
-        fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_pairs, use_container_width=True)
-
-        st.subheader("Number Gap Analysis")
-        gaps = compute_number_gaps(numbers_df, dates)
-        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
-        overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
-        st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
-
-        st.subheader("Yearly Number Frequency Heatmap")
-        if dates is not None:
-            numbers_df_with_dates = numbers_df.copy()
-            numbers_df_with_dates['Year'] = dates.dt.year.values[:len(numbers_df)]
-            years = sorted(numbers_df_with_dates['Year'].unique())
-            selected_years = st.multiselect("Select years to visualize", years, default=years[-5:])
-            if selected_years:
-                subset = numbers_df_with_dates[numbers_df_with_dates['Year'].isin(selected_years)]
-                freq_by_year = pd.DataFrame()
-                for y in selected_years:
-                    draws = subset[subset['Year'] == y]
-                    counts = Counter(draws.values.flatten())
-                    freq_by_year[y] = pd.Series({k: counts.get(k, 0) for k in range(1, 50)})
-                freq_by_year = freq_by_year.fillna(0)
-                plt.figure(figsize=(12,6))
-                sns.heatmap(freq_by_year.T, cmap="YlGnBu", cbar=True)
-                st.pyplot(plt.gcf())
-
-        st.subheader("Ticket Generation")
-        budget = st.slider("Budget in $", min_value=3, max_value=300, value=30, step=3)
-        price_per_ticket = 3
-        n_tickets = budget // price_per_ticket
-
-        gen_method = st.selectbox("Ticket generation method", ["Hot/Cold Weighted", "Frequency Weighted", "Smart Generation"])
-
-        if gen_method == "Hot/Cold Weighted":
-            tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-        elif gen_method == "Frequency Weighted":
-            tickets = generate_tickets_weighted(counter, n_tickets)
-        else:
-            fixed_nums = st.multiselect("Fix numbers to include in tickets (optional)", options=list(range(1, 50)))
-            exclude_nums = set()
-            if st.checkbox("Exclude numbers drawn in last 2 draws?"):
-                exclude_nums = set(numbers_df.tail(2).values.flatten())
-            overdue_nums = set([num for num, gap in gaps.items() if gap >= overdue_threshold])
-            tickets = generate_smart_tickets(n_tickets, set(fixed_nums), exclude_nums, overdue_nums)
-
-        st.write(f"Generated Tickets ({len(tickets)}):")
-        for i, t in enumerate(tickets, 1):
-            st.write(f"{i}: {t}")
-
-        st.subheader("Predictive Models for Next Draw Number Likelihood and Suggested Tickets")
-
-        models = {
-            "Logistic Regression": "logistic",
-            "Random Forest": "random_forest",
-            "Gradient Boosting": "gradient_boosting"
-        }
-
-        tickets_by_model = {}
-
-        for model_name, model_type in models.items():
-            with st.spinner(f"Training {model_name} model on last 100 draws..."):
-                df_feat = build_prediction_features(numbers_df, max_draws=100)
-                model, acc = train_predictive_model(df_feat, model_type=model_type)
-
-            st.write(f"**{model_name}** trained. Accuracy on test set: **{acc:.2%}**")
-
-            probs = predict_next_draw_probs(model, numbers_df)
-            probs_df = pd.DataFrame(list(probs.items()), columns=["Number", "Probability"]).sort_values(by="Probability", ascending=False)
-
-            fig_pred = px.bar(probs_df, x="Number", y="Probability",
-                              title=f"Predicted Probability of Number in Next Draw ({model_name})",
-                              color="Probability", color_continuous_scale="Viridis")
-            st.plotly_chart(fig_pred, use_container_width=True)
-
-            # Generate suggested ticket (top 6 numbers by probability)
-            ticket = get_top_ticket_from_probs(probs)
-            tickets_by_model[model_name] = ticket
-
-        st.subheader("Suggested Tickets from Each Predictive Model")
-        for model_name, ticket in tickets_by_model.items():
-            st.write(f"{model_name}: {ticket}")
-
-    except Exception as e:
-        st.error(f"Error processing CSV: {e}")
-
-else:
-    st.info("Please upload a CSV file with Lotto 6/49 draws.")
+        fig_pairs = px.bar(pairs_df, y="Pair",
