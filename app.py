@@ -124,9 +124,11 @@ def generate_tickets_based_on_model(probs, n_tickets):
     tickets = set()
     while len(tickets) < n_tickets:
         ticket = np.random.choice(numbers, 6, replace=False, p=weights)  # Randomly select 6 numbers
-        tickets.add(tuple(sorted(ticket.astype(int))))  # Convert np.int64 to int and store the ticket
+        ticket = tuple(sorted(int(num) for num in ticket))  # Convert np.int64 to int here
+        tickets.add(ticket)  # Store the ticket
         
     return list(tickets)
+
 
 @st.cache_data
 def build_prediction_features(numbers_df, max_draws=500):
