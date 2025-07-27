@@ -210,6 +210,11 @@ def predict_next_draw_probs(model, numbers_df):
     probs = model.predict_proba(X_pred)[:,1]
     return dict(zip(range(1, 50), probs))
 
+def get_top_ticket_from_probs(probs_dict):
+    sorted_nums = sorted(probs_dict.items(), key=lambda x: x[1], reverse=True)
+    top6 = tuple(num for num, prob in sorted_nums[:6])
+    return top6
+
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -255,24 +260,20 @@ if uploaded_file:
         overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
 
+        st.subheader("Yearly Number Frequency Heatmap")
         if dates is not None:
             numbers_df_with_dates = numbers_df.copy()
-            numbers_df_with_dates['Date'] = dates
-            numbers_df_with_dates = numbers_df_with_dates.dropna(subset=['Date']).reset_index(drop=True)
-            numbers_df_with_dates['Year'] = numbers_df_with_dates['Date'].dt.year
-
+            numbers_df_with_dates['Year'] = dates.dt.year.values[:len(numbers_df)]
             years = sorted(numbers_df_with_dates['Year'].unique())
-            selected_years = st.multiselect("Select years to visualize number frequencies", years, default=years[-5:])
-
+            selected_years = st.multiselect("Select years to visualize", years, default=years[-5:])
             if selected_years:
                 subset = numbers_df_with_dates[numbers_df_with_dates['Year'].isin(selected_years)]
                 freq_by_year = pd.DataFrame()
                 for y in selected_years:
                     draws = subset[subset['Year'] == y]
                     counts = Counter(draws.values.flatten())
-                    freq_by_year[y] = pd.Series({k: counts.get(k,0) for k in range(1,50)})
+                    freq_by_year[y] = pd.Series({k: counts.get(k, 0) for k in range(1, 50)})
                 freq_by_year = freq_by_year.fillna(0)
-
                 plt.figure(figsize=(12,6))
                 sns.heatmap(freq_by_year.T, cmap="YlGnBu", cbar=True)
                 st.pyplot(plt.gcf())
@@ -300,24 +301,38 @@ if uploaded_file:
         for i, t in enumerate(tickets, 1):
             st.write(f"{i}: {t}")
 
-        st.subheader("Predictive Model for Next Draw Number Likelihood")
+        st.subheader("Predictive Models for Next Draw Number Likelihood and Suggested Tickets")
 
-        model_choice = st.selectbox(
-            "Choose predictive model",
-            ["random_forest", "gradient_boosting", "logistic"]
-        )
+        models = {
+            "Logistic Regression": "logistic",
+            "Random Forest": "random_forest",
+            "Gradient Boosting": "gradient_boosting"
+        }
 
-        with st.spinner(f"Training {model_choice.replace('_', ' ').title()} model on last 100 draws..."):
-            df_feat = build_prediction_features(numbers_df, max_draws=100)
-            model, acc = train_predictive_model(df_feat, model_type=model_choice)
+        tickets_by_model = {}
 
-        st.write(f"Model trained. Accuracy on test set: **{acc:.2%}**")
+        for model_name, model_type in models.items():
+            with st.spinner(f"Training {model_name} model on last 100 draws..."):
+                df_feat = build_prediction_features(numbers_df, max_draws=100)
+                model, acc = train_predictive_model(df_feat, model_type=model_type)
 
-        probs = predict_next_draw_probs(model, numbers_df)
-        probs_df = pd.DataFrame(list(probs.items()), columns=["Number", "Probability"]).sort_values(by="Probability", ascending=False)
+            st.write(f"**{model_name}** trained. Accuracy on test set: **{acc:.2%}**")
 
-        fig_pred = px.bar(probs_df, x="Number", y="Probability", title=f"Predicted Probability of Number in Next Draw ({model_choice.replace('_', ' ').title()})", color="Probability", color_continuous_scale="Viridis")
-        st.plotly_chart(fig_pred, use_container_width=True)
+            probs = predict_next_draw_probs(model, numbers_df)
+            probs_df = pd.DataFrame(list(probs.items()), columns=["Number", "Probability"]).sort_values(by="Probability", ascending=False)
+
+            fig_pred = px.bar(probs_df, x="Number", y="Probability",
+                              title=f"Predicted Probability of Number in Next Draw ({model_name})",
+                              color="Probability", color_continuous_scale="Viridis")
+            st.plotly_chart(fig_pred, use_container_width=True)
+
+            # Generate suggested ticket (top 6 numbers by probability)
+            ticket = get_top_ticket_from_probs(probs)
+            tickets_by_model[model_name] = ticket
+
+        st.subheader("Suggested Tickets from Each Predictive Model")
+        for model_name, ticket in tickets_by_model.items():
+            st.write(f"{model_name}: {ticket}")
 
     except Exception as e:
         st.error(f"Error processing CSV: {e}")
