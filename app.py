@@ -224,8 +224,8 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
-        st.subheader("Uploaded Data (Last 30 draws):")
-        st.dataframe(df.tail(30))
+        st.subheader("Uploaded Data (All draws):")
+        st.dataframe(df, height=500)  # Shows all draws with scroll
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
         if numbers_df is None:
@@ -266,7 +266,6 @@ if uploaded_file:
         else:
             st.write("No overdue numbers with gap above threshold.")
 
-        # Yearly frequency heatmap if dates available
         st.subheader("Yearly Number Frequency Heatmap")
         if dates is not None:
             numbers_df_with_dates = numbers_df.copy()
@@ -342,14 +341,14 @@ if uploaded_file:
         # === Prize info ===
         st.subheader("🎁 Canada Lotto 6/49 Prize Tiers")
         st.markdown("""
-        | Matched Numbers               | Prize Tier          | Typical Prize                  |
-        |------------------------------|---------------------|-------------------------------|
-        | 6 main numbers                | Jackpot             | Jackpot (varies; millions)    |
-        | 5 main numbers + bonus number | Second Prize        | Usually hundreds of thousands |
-        | 5 main numbers                | Third Prize         | Usually several thousand       |
-        | 4 main numbers                | Fourth Prize        | Typically a few hundred dollars|
-        | 3 main numbers                | Fifth Prize         | Usually a fixed amount (e.g., $10) |
-        | 2 main numbers + bonus number | Sixth Prize         | Small prize (varies)           |
+        | Matched Numbers                | Prize Tier           | Typical Prize                     |
+        |-------------------------------|----------------------|----------------------------------|
+        | 6 main numbers                 | Jackpot              | Jackpot (varies; millions CAD)   |
+        | 5 main numbers + bonus number  | Second Prize         | Usually hundreds of thousands CAD|
+        | 5 main numbers                 | Third Prize          | Usually several thousand CAD      |
+        | 4 main numbers                 | Fourth Prize         | Typically a few hundred CAD       |
+        | 3 main numbers                 | Fifth Prize          | Usually a fixed amount (e.g., $10)|
+        | 2 main numbers + bonus number  | Sixth Prize          | Small prize (varies)              |
 
         *Note: Jackpot starts at several million CAD and rolls over if no winner.
         """)
