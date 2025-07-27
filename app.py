@@ -342,3 +342,25 @@ if uploaded_file:
 
 else:
     st.info("Please upload a CSV file with draw numbers.")
+
+def analyze_ticket_strategies(numbers_df, n_tickets):
+    # Generate tickets using different strategies
+    hot_tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+    weighted_tickets = generate_tickets_weighted(counter, n_tickets)
+
+    # Analyze effectiveness (for now, we count how many of the generated tickets match in frequency)
+    hot_ticket_count = sum(1 for ticket in hot_tickets if set(ticket) in most_frequent_numbers)
+    weighted_ticket_count = sum(1 for ticket in weighted_tickets if set(ticket) in most_frequent_numbers)
+
+    return {
+        "Hot/Cold Tickets Match": hot_ticket_count,
+        "Weighted Tickets Match": weighted_ticket_count,
+    }
+
+strategy_analysis = analyze_ticket_strategies(numbers_df, n_tickets)
+
+# Display the results of the ticket analysis
+st.write(f"Optimal Ticket Strategy Analysis:")
+st.write(f"Hot/Cold Mix Tickets Match: {strategy_analysis['Hot/Cold Tickets Match']}")
+st.write(f"Weighted Tickets Match: {strategy_analysis['Weighted Tickets Match']}")
+
