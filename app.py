@@ -215,6 +215,13 @@ def get_top_ticket_from_probs(probs_dict):
     top6 = tuple(num for num, prob in sorted_nums[:6])
     return top6
 
+def get_top_bonus_from_probs(probs_dict, exclude_nums):
+    filtered = {num: prob for num, prob in probs_dict.items() if num not in exclude_nums}
+    if not filtered:
+        return None
+    top_bonus = max(filtered, key=filtered.get)
+    return top_bonus
+
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -315,6 +322,7 @@ if uploaded_file:
         }
 
         tickets_by_model = {}
+        bonus_by_model = {}
 
         for model_name, model_type in models.items():
             with st.spinner(f"Training {model_name} model on last 100 draws..."):
@@ -332,20 +340,32 @@ if uploaded_file:
             st.plotly_chart(fig_pred, use_container_width=True)
 
             ticket = get_top_ticket_from_probs(probs)
+            bonus_num = get_top_bonus_from_probs(probs, set(ticket))
             tickets_by_model[model_name] = ticket
+            bonus_by_model[model_name] = bonus_num
 
         st.subheader("Suggested Tickets from Each Predictive Model")
-        for model_name, ticket in tickets_by_model.items():
-            st.write(f"{model_name}: {ticket}")
+        for model_name in models.keys():
+            st.write(f"{model_name}: Main Numbers: {tickets_by_model[model_name]} | Bonus Number: {bonus_by_model[model_name]}")
 
         # Combine all predictive tickets into one unique ticket
-        combined_numbers = set()
+        combined_main_numbers = set()
+        combined_bonus_candidates = set()
         for t in tickets_by_model.values():
-            combined_numbers.update(t)
-        combined_ticket = tuple(sorted(combined_numbers))[:6]  # Take top 6 numbers if more than 6
+            combined_main_numbers.update(t)
+        for b in bonus_by_model.values():
+            if b is not None:
+                combined_bonus_candidates.add(b)
+
+        combined_ticket_main = tuple(sorted(combined_main_numbers))[:6]
+        combined_ticket_bonus = None
+        if combined_bonus_candidates:
+            # Pick bonus number that occurs most frequently among models
+            freq_bonus = Counter(combined_bonus_candidates)
+            combined_ticket_bonus = freq_bonus.most_common(1)[0][0]
 
         st.subheader("Combined Ticket from All Predictive Models")
-        st.write(combined_ticket)
+        st.write(f"Main Numbers: {combined_ticket_main} | Bonus Number: {combined_ticket_bonus}")
 
     except Exception as e:
         st.error(f"Error processing CSV: {e}")
