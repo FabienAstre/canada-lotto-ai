@@ -6,7 +6,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from itertools import combinations
 import numpy as np
-from datetime import datetime
 
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
@@ -60,13 +59,9 @@ def extract_numbers_and_bonus(df):
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
 
 def compute_number_gaps(numbers_df, dates=None):
-    # Compute how many draws since each number last appeared
-
     last_seen = {num: -1 for num in range(1, 50)}
     gaps = {num: None for num in range(1, 50)}
 
-    # We assume numbers_df is sorted oldest to newest (check and sort if needed)
-    # If dates given, use them for ordering; else use index
     if dates is not None:
         order = dates.argsort()
         numbers_df = numbers_df.iloc[order].reset_index(drop=True)
@@ -76,20 +71,18 @@ def compute_number_gaps(numbers_df, dates=None):
     for idx, row in numbers_df.iterrows():
         for num in range(1, 50):
             if last_seen[num] == -1:
-                # Never seen before
-                gaps[num] = idx  # Number of draws since start (or could mark as large)
+                gaps[num] = idx
             else:
                 gaps[num] = idx - last_seen[num]
         for n in row.values:
             last_seen[n] = idx
 
-    # After last draw, calculate gap for each number as (total_draws - last_seen_index)
     total_draws = len(numbers_df)
     for num in range(1, 50):
         if last_seen[num] != -1:
             gaps[num] = total_draws - 1 - last_seen[num]
         else:
-            gaps[num] = total_draws  # never appeared, max gap
+            gaps[num] = total_draws
 
     return gaps
 
@@ -111,11 +104,9 @@ if uploaded_file:
                 st.subheader("Bonus Numbers (derniers tirages) :")
                 st.write(bonus_series.tail(30).to_list())
 
-            # Frequency counts for main numbers — all draws
             all_numbers = numbers_df.values.flatten()
             counter = Counter(all_numbers)
 
-            # Frequency counts for bonus numbers
             bonus_counter = Counter(bonus_series) if bonus_series is not None else Counter()
 
             hot = [num for num, _ in counter.most_common(6)]
@@ -131,11 +122,9 @@ if uploaded_file:
                 bonus_hot = [num for num, _ in bonus_counter.most_common(6)]
                 st.write(", ".join(map(str, bonus_hot)))
 
-            # Frequency DataFrame for main numbers
             freq_df = pd.DataFrame({"Numéro": list(range(1, 50))})
             freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
 
-            # Plot main numbers frequency
             fig = px.bar(
                 freq_df,
                 x="Numéro",
@@ -148,7 +137,6 @@ if uploaded_file:
             fig.update_layout(template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
-            # Hot vs Cold bar chart
             hot_df = freq_df[freq_df["Numéro"].isin(hot)]
             cold_df = freq_df[freq_df["Numéro"].isin(cold)]
 
@@ -164,7 +152,6 @@ if uploaded_file:
             )
             st.plotly_chart(fig2, use_container_width=True)
 
-            # --- PAIR FREQUENCY ANALYSIS ---
             pair_counts = Counter()
             for _, row in numbers_df.iterrows():
                 pairs = combinations(sorted(row.values), 2)
@@ -190,7 +177,6 @@ if uploaded_file:
             fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
             st.plotly_chart(fig_pairs, use_container_width=True)
 
-            # --- Number Gaps & Patterns ---
             st.subheader("Analyse des écarts entre apparitions des numéros")
 
             gaps = compute_number_gaps(numbers_df, dates)
@@ -200,7 +186,6 @@ if uploaded_file:
                 "Écarts (nombre de tirages depuis la dernière apparition)": list(gaps.values())
             })
 
-            # Show the numbers with highest gaps (overdue numbers)
             overdue_threshold = st.slider(
                 "Seuil d'écart minimum pour considérer un numéro comme 'en retard' (tirages)", min_value=0, max_value=100, value=20)
 
@@ -210,14 +195,12 @@ if uploaded_file:
             st.write(f"Numéros en retard (écarts ≥ {overdue_threshold} tirages) :")
             st.dataframe(overdue_df)
 
-            # Ticket generation settings
             budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
             price_per_ticket = 3
             n_tickets = budget // price_per_ticket
 
-            # Choose ticket generation strategy
             strategy = st.radio("Choisir la méthode de génération des tickets :", 
-                                ("Hot/Cold mix (original)", "Weighted by Frequency (new)"))
+                                ("Hot/Cold mix (original)", "Weighted by Frequency (new)", "Avancée (fixés, exclusions, retard)"))
 
             def generate_tickets_hot_cold(hot, cold, n_tickets):
                 tickets = set()
@@ -243,24 +226,103 @@ if uploaded_file:
             def generate_tickets_weighted(counter, n_tickets):
                 numbers = np.array(range(1, 50))
                 freqs = np.array([counter.get(num, 0) for num in numbers])
-                weights = freqs + 1  # Add 1 to avoid zero weights
+                weights = freqs + 1
 
                 tickets = set()
                 while len(tickets) < n_tickets:
                     ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
-                    ticket = tuple(sorted(int(x) for x in ticket_np))  # Convert to int to avoid np.int64 print
+                    ticket = tuple(sorted(int(x) for x in ticket_np))
                     tickets.add(ticket)
                 return list(tickets)
 
-            # Generate tickets based on strategy
-            if strategy == "Hot/Cold mix (original)":
-                tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-            else:
-                tickets = generate_tickets_weighted(counter, n_tickets)
+            # Advanced ticket generation UI options
+            if strategy == "Avancée (fixés, exclusions, retard)":
+                st.subheader("Options avancées de génération de tickets")
 
-            st.subheader("Tickets générés :")
-            for i, t in enumerate(tickets, 1):
-                st.write(f"{i}: {t}")
+                exclude_last_n = st.number_input("Exclure les numéros tirés dans les derniers N tirages", min_value=0, max_value=30, value=2, step=1)
+
+                recent_numbers = set()
+                if exclude_last_n > 0 and len(numbers_df) >= exclude_last_n:
+                    recent_draws = numbers_df.tail(exclude_last_n)
+                    recent_numbers = set(recent_draws.values.flatten())
+
+                include_due = st.checkbox("Inclure les numéros en retard (selon seuil d'écart défini)", value=True)
+                due_numbers = set()
+                if include_due:
+                    due_numbers = set(overdue_df["Numéro"].tolist()) if not overdue_df.empty else set()
+
+                fixed_numbers_input = st.text_input("Entrez vos numéros fixes séparés par des virgules (ex: 5,12,23)", value="")
+                fixed_numbers = set()
+                if fixed_numbers_input.strip():
+                    try:
+                        fixed_numbers = set(int(x.strip()) for x in fixed_numbers_input.split(",") if 1 <= int(x.strip()) <= 49)
+                    except:
+                        st.error("Veuillez entrer des numéros valides entre 1 et 49, séparés par des virgules.")
+
+                if len(fixed_numbers) > 5:
+                    st.error("Vous pouvez fixer au maximum 5 numéros. Le reste sera généré aléatoirement.")
+                    fixed_numbers = set(list(fixed_numbers)[:5])
+
+                def generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums, top_pairs, total_nums=6):
+                    tickets = set()
+                    pool = set(range(1, 50))
+                    pool -= exclude_nums
+                    pool -= fixed_nums
+
+                    top_pairs_set = set(tuple(sorted([p1, p2])) for p1, p2 in (pair for pair, _ in top_pairs))
+
+                    while len(tickets) < n_tickets:
+                        ticket = set(fixed_nums)
+
+                        due_to_add = due_nums - ticket
+                        while len(ticket) < total_nums and due_to_add:
+                            ticket.add(due_to_add.pop())
+
+                        pairs_to_consider = [p for p in top_pairs_set if any(num in fixed_nums for num in p)]
+                        random.shuffle(pairs_to_consider)
+                        for p in pairs_to_consider:
+                            if len(ticket) >= total_nums:
+                                break
+                            for num in p:
+                                if num not in ticket and num not in exclude_nums and len(ticket) < total_nums:
+                                    ticket.add(num)
+
+                        remaining_pool = list(pool - ticket)
+                        random.shuffle(remaining_pool)
+                        for num in remaining_pool:
+                            if len(ticket) >= total_nums:
+                                break
+                            ticket.add(num)
+
+                        ticket_tuple = tuple(sorted(ticket))
+                        tickets.add(ticket_tuple)
+
+                    return list(tickets)
+
+                if st.button("Générer des tickets avancés"):
+                    if len(fixed_numbers) > 5:
+                        st.error("Veuillez fixer 5 numéros maximum.")
+                    else:
+                        tickets = generate_smart_tickets(
+                            n_tickets=n_tickets,
+                            fixed_nums=fixed_numbers,
+                            exclude_nums=recent_numbers,
+                            due_nums=due_numbers,
+                            top_pairs=top_pairs
+                        )
+                        st.subheader("Tickets avancés générés :")
+                        for i, t in enumerate(tickets, 1):
+                            st.write(f"{i}: {t}")
+
+            else:
+                if strategy == "Hot/Cold mix (original)":
+                    tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
+                else:
+                    tickets = generate_tickets_weighted(counter, n_tickets)
+
+                st.subheader("Tickets générés :")
+                for i, t in enumerate(tickets, 1):
+                    st.write(f"{i}: {t}")
 
     except Exception as e:
         st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
