@@ -93,6 +93,29 @@ def compute_number_gaps(numbers_df, dates=None):
         gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
     return gaps
 
+def generate_tickets_hot_cold(hot, cold, n_tickets):
+    tickets = set()
+    while len(tickets) < n_tickets:
+        n_hot = random.randint(2, min(4, len(hot)))
+        n_cold = random.randint(2, min(4, len(cold)))
+        pick_hot = random.sample(hot, n_hot)
+        pick_cold = random.sample(cold, n_cold)
+        current = set(pick_hot + pick_cold)
+        while len(current) < 6:
+            current.add(random.randint(1, 49))
+        tickets.add(to_py_ticket(current))
+    return list(tickets)
+
+def generate_tickets_weighted(counter, n_tickets):
+    numbers = np.array(range(1, 50))
+    freqs = np.array([counter.get(num, 0) for num in numbers])
+    weights = freqs + 1
+    tickets = set()
+    while len(tickets) < n_tickets:
+        ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
+        tickets.add(to_py_ticket(ticket_np.astype(int)))  # Convert np.int64 to int
+    return list(tickets)
+
 def generate_tickets_based_on_model(probs, n_tickets):
     numbers = list(range(1, 50))  # All numbers 1 to 49
     weights = np.array([probs.get(num, 0) for num in numbers])  # Get the predicted probabilities for each number
@@ -101,7 +124,7 @@ def generate_tickets_based_on_model(probs, n_tickets):
     tickets = set()
     while len(tickets) < n_tickets:
         ticket = np.random.choice(numbers, 6, replace=False, p=weights)  # Randomly select 6 numbers
-        tickets.add(tuple(sorted(ticket)))  # Sort and store the ticket
+        tickets.add(tuple(sorted(ticket.astype(int))))  # Convert np.int64 to int and store the ticket
         
     return list(tickets)
 
@@ -201,110 +224,45 @@ if uploaded_file:
         st.write(", ".join(map(str, cold)))
 
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
-        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
-        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", title="Number Frequency", color_continuous_scale="Blues")
-        st.plotly_chart(fig, use_container_width=True)
+        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
 
-        st.subheader("Number Pair Frequency (last 500 draws)")
-        pair_counts = compute_pair_frequencies(numbers_df, limit=500)
-        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
-        pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count", color_continuous_scale="Viridis")
-        fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_pairs, use_container_width=True)
+        st.subheader("Frequency of Each Number:")
+        fig = px.bar(freq_df, x="Number", y="Frequency", title="Frequency of Numbers")
+        st.plotly_chart(fig)
 
-        st.subheader("Number Gap Analysis")
+        st.subheader("Pair Frequency (Last 500 Draws):")
+        pair_counter = compute_pair_frequencies(numbers_df)
+        pair_df = pd.DataFrame(pair_counter.items(), columns=["Pair", "Frequency"])
+        pair_df = pair_df.sort_values(by="Frequency", ascending=False)
+        st.dataframe(pair_df)
+
+        st.subheader("Number Gaps (Days Since Last Draw):")
         gaps = compute_number_gaps(numbers_df, dates)
-        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
-        overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
-        st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
+        gap_df = pd.DataFrame(gaps.items(), columns=["Number", "Gap"])
+        st.dataframe(gap_df)
 
-        if dates is not None:
-            numbers_df_with_dates = numbers_df.copy()
-            numbers_df_with_dates['Date'] = dates
-            numbers_df_with_dates = numbers_df_with_dates.dropna(subset=['Date']).reset_index(drop=True)
-            numbers_df_with_dates['Year'] = numbers_df_with_dates['Date'].dt.year
+        st.subheader("Ticket Generation Options:")
+        n_tickets = st.number_input("How many tickets to generate?", min_value=1, max_value=100, value=5)
 
-            years = sorted(numbers_df_with_dates['Year'].unique())
-            numbers = list(range(1, 50))
-            freq_matrix = pd.DataFrame(0, index=numbers, columns=years)
+        ticket_option = st.selectbox("Choose ticket generation strategy:", ("Hot/Cold", "Weighted", "Predictive"))
 
-            for year in years:
-                yearly_data = numbers_df_with_dates[numbers_df_with_dates['Year'] == year]
-                nums = yearly_data.iloc[:, 0:6].values.flatten()
-                counts = Counter(nums)
-                for num in counts:
-                    freq_matrix.at[num, year] = counts[num]
-
-            st.subheader("Heatmap: Number Frequency by Year")
-            fig_heat, ax = plt.subplots(figsize=(15, 10))
-            sns.heatmap(freq_matrix, cmap="YlGnBu", linewidths=0.5, ax=ax, cbar_kws={'label': 'Frequency'})
-            ax.set_xlabel("Year")
-            ax.set_ylabel("Number")
-            st.pyplot(fig_heat)
-
-            st.subheader("Frequency Trend of Selected Numbers Over Years")
-            selected_numbers = st.multiselect("Select numbers (1 to 49) for trend", options=range(1, 50), default=[7,14,23])
-            if selected_numbers:
-                trend_df = freq_matrix.loc[selected_numbers].transpose()
-                fig_line = px.line(trend_df, x=trend_df.index, y=trend_df.columns,
-                                   labels={"x": "Year", "value": "Frequency"},
-                                   title="Number Frequency Trends Over Years")
-                st.plotly_chart(fig_line, use_container_width=True)
-
-        st.subheader("Predictive Model: Next Draw Number Likelihood")
-        with st.spinner("Training predictive model..."):
-            df_feat = build_prediction_features(numbers_df, max_draws=500)
-            model, acc = train_predictive_model(df_feat)
-
-        st.write(f"Model trained. Accuracy on test set: **{acc:.2%}**")
-
-        probs = predict_next_draw_probs(model, numbers_df)
-        probs_df = pd.DataFrame(list(probs.items()), columns=["Number", "Probability"]).sort_values(by="Probability", ascending=False)
-
-        fig_pred = px.bar(probs_df, x="Number", y="Probability", title="Predicted Probability of Number in Next Draw", color="Probability", color_continuous_scale="Viridis")
-        st.plotly_chart(fig_pred, use_container_width=True)
-
-        budget = st.slider("Budget ($)", min_value=3, max_value=300, value=30, step=3)
-        price_per_ticket = 3
-        n_tickets = budget // price_per_ticket
-
-        strategy = st.radio("Ticket generation strategy:", ["Hot/Cold mix", "Weighted by Frequency", "Based on Model"])
-
-        tickets = []
-        if strategy == "Hot/Cold mix":
+        if ticket_option == "Hot/Cold":
             tickets = generate_tickets_hot_cold(hot, cold, n_tickets)
-        elif strategy == "Weighted by Frequency":
+        elif ticket_option == "Weighted":
             tickets = generate_tickets_weighted(counter, n_tickets)
         else:
+            st.subheader("Training Model...")
+            df_feat = build_prediction_features(numbers_df)
+            model, acc = train_predictive_model(df_feat)
+            st.write(f"Model Accuracy: {acc:.2f}")
+
+            st.subheader("Predicting Next Draw Probabilities...")
+            probs = predict_next_draw_probs(model, numbers_df)
             tickets = generate_tickets_based_on_model(probs, n_tickets)
 
-        if tickets:
-            st.subheader("Generated Tickets:")
-            for i, t in enumerate(tickets, 1):
-                st.write(f"{i}: {t}")
-
-            csv_buffer = io.StringIO()
-            pd.DataFrame(tickets, columns=[f"Num {i+1}" for i in range(6)]).to_csv(csv_buffer, index=False)
-            st.download_button(
-                label="Download Tickets (CSV)",
-                data=csv_buffer.getvalue(),
-                file_name="generated_tickets.csv",
-                mime="text/csv"
-            )
-
-        st.subheader("Lottery Probability")
-        st.write("""  
-        **P(E) = Favorable Outcomes / Total Possible Outcomes**
-
-        For Lotto 6/49:
-        - Total combinations = C(49, 6) = 13,983,816
-        - Your ticket matches 1 combination.
-        - **P(E)** = 1 / 13,983,816 ≈ 0.00000715%.
-        """)
+        st.subheader("Generated Tickets:")
+        for idx, ticket in enumerate(tickets, 1):
+            st.write(f"{idx}: {ticket}")
 
     except Exception as e:
-        st.error(f"Error reading CSV: {e}")
-
-else:
-    st.info("Please upload a CSV file with draw numbers.")
+        st.error(f"Error processing file: {e}")
