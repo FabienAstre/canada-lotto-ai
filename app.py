@@ -10,7 +10,7 @@ import numpy as np
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
 st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyse des tirages réels, statistiques et génération de tickets.")
+st.write("Analyze real draws, statistics, and generate smart tickets.")
 
 # --- Helpers ---
 def to_py_int_set(xs):
@@ -21,9 +21,9 @@ def to_py_ticket(ticket):
 
 # --- File Upload ---
 uploaded_file = st.file_uploader(
-    "Importer un fichier CSV Lotto 6/49",
+    "Upload a Lotto 6/49 CSV file",
     type=["csv"],
-    help="CSV avec colonnes: NUMBER DRAWN 1 à NUMBER DRAWN 6 et BONUS NUMBER",
+    help="CSV with columns: NUMBER DRAWN 1 to NUMBER DRAWN 6 and BONUS NUMBER",
 )
 
 def extract_numbers_and_bonus(df):
@@ -96,19 +96,19 @@ def compute_number_gaps(numbers_df, dates=None):
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
-        st.subheader("Données complètes importées :")
+        st.subheader("Uploaded Data:")
         st.dataframe(df)
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
 
         if numbers_df is None:
-            st.error("Le fichier CSV doit contenir les 6 colonnes principales 'NUMBER DRAWN 1' à 'NUMBER DRAWN 6' avec des nombres valides entre 1 et 49.")
+            st.error("The CSV file must contain columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with valid numbers between 1 and 49.")
         else:
-            st.subheader("Derniers tirages :")
+            st.subheader("Latest Draws:")
             st.dataframe(numbers_df.tail(30).reset_index(drop=True))
 
             if bonus_series is not None:
-                st.subheader("Bonus Numbers (derniers tirages) :")
+                st.subheader("Bonus Numbers (latest draws):")
                 st.write(bonus_series.tail(30).to_list())
 
             all_numbers = numbers_df.values.flatten()
@@ -119,42 +119,42 @@ if uploaded_file:
             hot = [num for num, _ in counter.most_common(6)]
             cold = [num for num, _ in counter.most_common()[:-7:-1]]
 
-            st.subheader("Numéros chauds :")
+            st.subheader("Hot Numbers:")
             st.write(", ".join(map(str, hot)))
-            st.subheader("Numéros froids :")
+            st.subheader("Cold Numbers:")
             st.write(", ".join(map(str, cold)))
 
             if bonus_series is not None:
-                st.subheader("Numéros bonus les plus fréquents :")
+                st.subheader("Most Frequent Bonus Numbers:")
                 bonus_hot = [num for num, _ in bonus_counter.most_common(6)]
                 st.write(", ".join(map(str, bonus_hot)))
 
-            freq_df = pd.DataFrame({"Numéro": list(range(1, 50))})
-            freq_df["Fréquence"] = freq_df["Numéro"].apply(lambda x: counter[x] if x in counter else 0)
+            freq_df = pd.DataFrame({"Number": list(range(1, 50))})
+            freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
 
             fig = px.bar(
                 freq_df,
-                x="Numéro",
-                y="Fréquence",
-                title="Fréquence des numéros (tous les tirages importés)",
-                labels={"Numéro": "Numéro", "Fréquence": "Nombre d'apparitions"},
-                color="Fréquence",
+                x="Number",
+                y="Frequency",
+                title="Number Frequency (all draws)",
+                labels={"Number": "Number", "Frequency": "Occurrences"},
+                color="Frequency",
                 color_continuous_scale="Blues",
             )
             fig.update_layout(template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
-            hot_df = freq_df[freq_df["Numéro"].isin(hot)]
-            cold_df = freq_df[freq_df["Numéro"].isin(cold)]
+            hot_df = freq_df[freq_df["Number"].isin(hot)]
+            cold_df = freq_df[freq_df["Number"].isin(cold)]
 
             fig2 = go.Figure()
-            fig2.add_trace(go.Bar(x=hot_df["Numéro"], y=hot_df["Fréquence"], name="Numéros chauds", marker_color="red"))
-            fig2.add_trace(go.Bar(x=cold_df["Numéro"], y=cold_df["Fréquence"], name="Numéros froids", marker_color="blue"))
+            fig2.add_trace(go.Bar(x=hot_df["Number"], y=hot_df["Frequency"], name="Hot Numbers", marker_color="red"))
+            fig2.add_trace(go.Bar(x=cold_df["Number"], y=cold_df["Frequency"], name="Cold Numbers", marker_color="blue"))
             fig2.update_layout(
                 barmode="group",
-                title="Comparaison Numéros chauds vs froids",
-                xaxis_title="Numéro",
-                yaxis_title="Fréquence",
+                title="Hot vs Cold Numbers",
+                xaxis_title="Number",
+                yaxis_title="Frequency",
                 template="plotly_white",
             )
             st.plotly_chart(fig2, use_container_width=True)
@@ -168,7 +168,7 @@ if uploaded_file:
             pairs_df = pd.DataFrame(top_pairs, columns=["Pair", "Count"])
             pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
 
-            st.subheader("Top 10 des paires de numéros les plus fréquentes :")
+            st.subheader("Top 10 Most Frequent Number Pairs:")
             st.dataframe(pairs_df)
 
             fig_pairs = px.bar(
@@ -176,37 +176,37 @@ if uploaded_file:
                 y="Pair",
                 x="Count",
                 orientation='h',
-                title="Fréquence des paires de numéros",
-                labels={"Count": "Nombre d'apparitions", "Pair": "Paire de numéros"},
+                title="Number Pair Frequency",
+                labels={"Count": "Occurrences", "Pair": "Number Pair"},
                 color="Count",
                 color_continuous_scale="Viridis",
             )
             fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'}, template="plotly_white")
             st.plotly_chart(fig_pairs, use_container_width=True)
 
-            st.subheader("Analyse des écarts entre apparitions des numéros")
+            st.subheader("Number Gap Analysis")
             gaps = compute_number_gaps(numbers_df, dates)
 
             gaps_df = pd.DataFrame({
-                "Numéro": list(gaps.keys()),
-                "Écarts (nombre de tirages depuis la dernière apparition)": list(gaps.values())
+                "Number": list(gaps.keys()),
+                "Gap (draws since last appearance)": list(gaps.values())
             })
 
             overdue_threshold = st.slider(
-                "Seuil d'écart minimum pour considérer un numéro comme 'en retard' (tirages)", min_value=0, max_value=100, value=20)
+                "Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=20)
 
-            overdue_df = gaps_df[gaps_df["Écarts (nombre de tirages depuis la dernière apparition)"] >= overdue_threshold]
-            overdue_df = overdue_df.sort_values(by="Écarts (nombre de tirages depuis la dernière apparition)", ascending=False)
+            overdue_df = gaps_df[gaps_df["Gap (draws since last appearance)"] >= overdue_threshold]
+            overdue_df = overdue_df.sort_values(by="Gap (draws since last appearance)", ascending=False)
 
-            st.write(f"Numéros en retard (écarts ≥ {overdue_threshold} tirages) :")
+            st.write(f"Overdue numbers (gap ≥ {overdue_threshold} draws):")
             st.dataframe(overdue_df)
 
-            budget = st.slider("Budget en $", min_value=3, max_value=300, value=30, step=3)
+            budget = st.slider("Budget ($)", min_value=3, max_value=300, value=30, step=3)
             price_per_ticket = 3
             n_tickets = budget // price_per_ticket
 
-            strategy = st.radio("Choisir la méthode de génération des tickets :",
-                                ("Hot/Cold mix (original)", "Weighted by Frequency (new)", "Avancée (fixés, exclusions, retard)"))
+            strategy = st.radio("Choose ticket generation strategy:",
+                                ("Hot/Cold mix (original)", "Weighted by Frequency (new)", "Advanced (fixed, exclusions, overdue)"))
 
             # --- Ticket Generators ---
             def generate_tickets_hot_cold(hot, cold, n_tickets):
@@ -266,32 +266,32 @@ if uploaded_file:
                 return list(tickets)
 
             # --- Advanced Strategy ---
-            if strategy == "Avancée (fixés, exclusions, retard)":
-                st.subheader("Options avancées de génération de tickets")
+            if strategy == "Advanced (fixed, exclusions, overdue)":
+                st.subheader("Advanced Ticket Options")
 
-                exclude_last_n = st.number_input("Exclure les numéros tirés dans les derniers N tirages", min_value=0, max_value=30, value=2, step=1)
+                exclude_last_n = st.number_input("Exclude numbers drawn in the last N draws", min_value=0, max_value=30, value=2, step=1)
                 recent_numbers = set()
                 if exclude_last_n > 0 and len(numbers_df) >= exclude_last_n:
                     recent_draws = numbers_df.tail(exclude_last_n)
                     recent_numbers = to_py_int_set(recent_draws.values.flatten().tolist())
 
-                include_due = st.checkbox("Inclure les numéros en retard (selon seuil d'écart défini)", value=True)
+                include_due = st.checkbox("Include overdue numbers (based on gap analysis)", value=True)
                 due_numbers = set()
                 if include_due:
-                    due_numbers = to_py_int_set(overdue_df["Numéro"].tolist()) if not overdue_df.empty else set()
+                    due_numbers = to_py_int_set(overdue_df["Number"].tolist()) if not overdue_df.empty else set()
 
-                fixed_numbers_input = st.text_input("Entrez vos numéros fixes séparés par des virgules (ex: 5,12,23)", value="")
+                fixed_numbers_input = st.text_input("Enter your fixed numbers (comma-separated, e.g., 5,12,23)", value="")
                 fixed_numbers = set()
                 if fixed_numbers_input.strip():
                     try:
                         fixed_numbers = set(int(x.strip()) for x in fixed_numbers_input.split(",") if 1 <= int(x.strip()) <= 49)
                     except:
-                        st.error("Veuillez entrer des numéros valides entre 1 et 49, séparés par des virgules.")
+                        st.error("Please enter valid numbers between 1 and 49, separated by commas.")
                 if len(fixed_numbers) > 5:
-                    st.error("Vous pouvez fixer au maximum 5 numéros. Le reste sera généré aléatoirement.")
+                    st.error("You can fix a maximum of 5 numbers. The rest will be randomized.")
                     fixed_numbers = set(list(fixed_numbers)[:5])
 
-                if st.button("Générer des tickets avancés"):
+                if st.button("Generate Advanced Tickets"):
                     tickets = generate_smart_tickets(
                         n_tickets=n_tickets,
                         fixed_nums=fixed_numbers,
@@ -299,7 +299,7 @@ if uploaded_file:
                         due_nums=due_numbers,
                         top_pairs=top_pairs
                     )
-                    st.subheader("Tickets avancés générés :")
+                    st.subheader("Advanced Tickets Generated:")
                     for i, t in enumerate(tickets, 1):
                         st.write(f"{i}: {t}")
 
@@ -309,12 +309,12 @@ if uploaded_file:
                 else:
                     tickets = generate_tickets_weighted(counter, n_tickets)
 
-                st.subheader("Tickets générés :")
+                st.subheader("Generated Tickets:")
                 for i, t in enumerate(tickets, 1):
                     st.write(f"{i}: {t}")
 
     except Exception as e:
-        st.error(f"Erreur lors de la lecture du fichier CSV : {e}")
+        st.error(f"Error reading the CSV file: {e}")
 
 else:
-    st.info("Veuillez importer un fichier CSV avec les numéros des tirages.")
+    st.info("Please upload a CSV file with the draw numbers.")
