@@ -133,7 +133,9 @@ def generate_smart_tickets(n_tickets, fixed_nums, exclude_nums, due_nums):
         tickets.add(to_py_ticket(ticket))
     return list(tickets)
 
-def build_prediction_features(numbers_df):
+@st.cache_data
+def build_prediction_features(numbers_df, max_draws=500):
+    numbers_df = numbers_df.tail(max_draws).reset_index(drop=True)
     total_draws = len(numbers_df)
     df_feat = []
     last_seen_draw = {num: -1 for num in range(1, 50)}
@@ -144,7 +146,6 @@ def build_prediction_features(numbers_df):
         for num in range(1, 50):
             gap = idx - last_seen_draw[num] if last_seen_draw[num] != -1 else total_draws
             freq = freq_counter[num]
-            appeared = 1 if num in current_numbers else 0
             df_feat.append({
                 "draw_index": idx,
                 "number": num,
@@ -160,18 +161,13 @@ def build_prediction_features(numbers_df):
 
     df_feat['appeared_next'] = 0
     for idx in range(total_draws-1):
-        current_draw = idx
-        next_draw = idx + 1
-        mask_current = df_feat['draw_index'] == current_draw
-        mask_next = df_feat['draw_index'] == next_draw
-        df_current = df_feat[mask_current]
-        df_next = df_feat[mask_next]
-        for num in range(1, 50):
-            appeared_next_val = 1 if num in set(numbers_df.iloc[next_draw].values) else 0
-            df_feat.loc[(df_feat['draw_index'] == current_draw) & (df_feat['number'] == num), 'appeared_next'] = appeared_next_val
+        appeared_next_vals = set(numbers_df.iloc[idx+1].values)
+        mask = df_feat['draw_index'] == idx
+        df_feat.loc[mask, 'appeared_next'] = df_feat.loc[mask, 'number'].apply(lambda x: 1 if x in appeared_next_vals else 0)
 
     return df_feat
 
+@st.cache_data
 def train_predictive_model(df_feat):
     feature_cols = ['gap', 'frequency']
     X = df_feat[feature_cols]
@@ -286,7 +282,7 @@ if uploaded_file:
 
         st.subheader("Predictive Model: Next Draw Number Likelihood")
         with st.spinner("Training predictive model..."):
-            df_feat = build_prediction_features(numbers_df)
+            df_feat = build_prediction_features(numbers_df, max_draws=500)
             model, acc = train_predictive_model(df_feat)
 
         st.write(f"Model trained. Accuracy on test set: **{acc:.2%}**")
