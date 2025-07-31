@@ -3,27 +3,16 @@ import pandas as pd
 from collections import Counter
 import random
 import plotly.express as px
-import plotly.graph_objects as go
 from itertools import combinations
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 
-# Optional Google Sheets support (disabled unless needed)
-# import gspread
-# from oauth2client.service_account import ServiceAccountCredentials
-
-# Streamlit page configuration
+# Streamlit page config
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 
-# Title and Description
 st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
-# --- Helper Functions ---
+# --- Helper functions ---
 
 def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
@@ -87,30 +76,7 @@ def compute_number_gaps(numbers_df, dates=None):
         gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
     return gaps
 
-def generate_tickets_hot_cold(hot, cold, n_tickets):
-    tickets = set()
-    while len(tickets) < n_tickets:
-        n_hot = random.randint(2, min(4, len(hot)))
-        n_cold = random.randint(2, min(4, len(cold)))
-        pick_hot = random.sample(hot, n_hot)
-        pick_cold = random.sample(cold, n_cold)
-        current = set(pick_hot + pick_cold)
-        while len(current) < 6:
-            current.add(random.randint(1, 49))
-        tickets.add(to_py_ticket(current))
-    return list(tickets)
-
-def generate_tickets_weighted(counter, n_tickets):
-    numbers = np.array(range(1, 50))
-    freqs = np.array([counter.get(num, 0) for num in numbers])
-    weights = freqs + 1
-    tickets = set()
-    while len(tickets) < n_tickets:
-        ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
-        tickets.add(to_py_ticket(ticket_np))
-    return list(tickets)
-
-# --- Streamlit App ---
+# --- Streamlit app ---
 
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
@@ -122,45 +88,97 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # ✅ Reverse last 30 draws so most recent is on top
-        st.subheader("Uploaded Data (Last 30 draws, most recent first):")
-        st.dataframe(df.tail(30).iloc[::-1])
+        # Sort by date if available
+        date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
+        if date_col:
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            df = df.sort_values(by=date_col)
+
+        # Show last 30 draws in chronological order (oldest first)
+        st.subheader("Uploaded Data (Last 30 draws, top = oldest):")
+        st.dataframe(df.tail(30))
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
         if numbers_df is None:
-            st.error("CSV must have valid columns from 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
+            st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
             st.stop()
 
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
+        gaps = compute_number_gaps(numbers_df, dates)
 
+        # Hot & Cold numbers
         st.subheader("Hot Numbers:")
         st.write(", ".join(map(str, hot)))
-
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
 
+        # Number frequency chart
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
-        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter[x] if x in counter else 0)
-        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", title="Number Frequency", color_continuous_scale="Blues")
+        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
+        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency",
+                     title="Number Frequency", color_continuous_scale="Blues")
         st.plotly_chart(fig, use_container_width=True)
 
+        # Number pair frequency chart
         st.subheader("Number Pair Frequency (last 500 draws)")
         pair_counts = compute_pair_frequencies(numbers_df)
-        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
+        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"])\
+            .sort_values(by="Count", ascending=False).head(20)
         pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count", color_continuous_scale="Viridis")
+        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count",
+                           color_continuous_scale="Viridis")
         fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
+        # Number gap analysis
         st.subheader("Number Gap Analysis")
-        gaps = compute_number_gaps(numbers_df, dates)
-        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
+        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())})\
+            .sort_values(by="Gap", ascending=False)
         overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
 
+        # --- Ticket Generator ---
+        st.subheader("🎟️ Generate Lotto Tickets")
+
+        ticket_strategy = st.selectbox(
+            "Strategy for ticket generation",
+            ["Pure Random", "Bias: Hot", "Bias: Cold", "Bias: Overdue", "Mixed"]
+        )
+
+        num_tickets = st.slider("How many tickets do you want to generate?", 1, 10, 5)
+
+        def generate_ticket(pool):
+            return sorted(random.sample(pool, 6))
+
+        generated_tickets = []
+
+        for _ in range(num_tickets):
+            if ticket_strategy == "Pure Random":
+                pool = list(range(1, 50))
+            elif ticket_strategy == "Bias: Hot":
+                pool = hot + random.sample([n for n in range(1, 50) if n not in hot], 43)
+            elif ticket_strategy == "Bias: Cold":
+                pool = cold + random.sample([n for n in range(1, 50) if n not in cold], 43)
+            elif ticket_strategy == "Bias: Overdue":
+                sorted_by_gap = sorted(gaps.items(), key=lambda x: x[1], reverse=True)
+                pool = [n for n, g in sorted_by_gap[:10]] + random.sample([n for n in range(1, 50) if n not in [x for x, _ in sorted_by_gap[:10]]], 39)
+            elif ticket_strategy == "Mixed":
+                pool = hot[:3] + cold[:2] + [n for n in range(1, 50) if n not in hot and n not in cold]
+                pool += random.sample([n for n in range(1, 50) if n not in pool], max(0, 49 - len(pool)))
+            else:
+                pool = list(range(1, 50))
+
+            ticket = generate_ticket(pool)
+            generated_tickets.append(ticket)
+
+        st.write("🎰 Your Generated Tickets:")
+        for idx, ticket in enumerate(generated_tickets, 1):
+            st.write(f"Ticket {idx}: {ticket}")
+
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
+
 else:
     st.info("Please upload a CSV file with Lotto 6/49 draw results.")
