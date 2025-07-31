@@ -205,6 +205,7 @@ if uploaded_file:
             ticket = must_include.copy()
             pool = [n for n in predicted_numbers if n not in ticket]
             needed = 6 - len(ticket)
+
             if len(pool) >= needed:
                 ticket += random.sample(pool, needed)
             else:
@@ -213,6 +214,20 @@ if uploaded_file:
                 remaining_pool = [n for n in range(1, 50) if n not in ticket]
                 if remaining_needed > 0:
                     ticket += random.sample(remaining_pool, remaining_needed)
+
+            # Add randomness: swap 1-2 numbers randomly (except must_include)
+            swap_count = random.randint(1, 2)
+            for _ in range(swap_count):
+                idx_to_swap = random.randint(0, 5)
+                # Only swap if the number is NOT in must_include
+                if ticket[idx_to_swap] in must_include:
+                    continue
+                available_nums = [n for n in range(1, 50) if n not in ticket]
+                if not available_nums:
+                    break
+                new_num = random.choice(available_nums)
+                ticket[idx_to_swap] = new_num
+
             return sorted(ticket)
 
         st.write("Generated ML Tickets:")
