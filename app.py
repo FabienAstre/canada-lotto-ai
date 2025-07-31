@@ -101,7 +101,7 @@ if uploaded_file:
             columns_to_display.insert(0, date_col)  # put date first
 
         st.subheader("Uploaded Data (Last 30 draws, top = newest):")
-        st.dataframe(df.head(30)[columns_to_display].reset_index(drop=True))
+        st.dataframe(df.head(300)[columns_to_display].reset_index(drop=True))
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
         if numbers_df is None:
