@@ -186,11 +186,39 @@ if uploaded_file:
         # 🧠 ML-based Prediction
         st.subheader("🧠 ML-Based Prediction (Experimental)")
 
+        # User inputs for ML tickets:
+        must_include = st.multiselect(
+            "Select numbers you want to include in every ML ticket",
+            options=list(range(1, 50)),
+            default=[]
+        )
+
+        num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
+
         most_common = counter.most_common(6)
         predicted_numbers = sorted([int(num) for num, _ in most_common])
 
-        st.write("Predicted Numbers:")
+        st.write("Base Predicted Numbers (most common 6):")
         st.write(predicted_numbers)
+
+        def generate_ml_ticket(must_include, predicted_numbers):
+            ticket = must_include.copy()
+            pool = [n for n in predicted_numbers if n not in ticket]
+            needed = 6 - len(ticket)
+            if len(pool) >= needed:
+                ticket += random.sample(pool, needed)
+            else:
+                ticket += pool
+                remaining_needed = 6 - len(ticket)
+                remaining_pool = [n for n in range(1, 50) if n not in ticket]
+                if remaining_needed > 0:
+                    ticket += random.sample(remaining_pool, remaining_needed)
+            return sorted(ticket)
+
+        st.write("Generated ML Tickets:")
+        for i in range(num_ml_tickets):
+            ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
+            st.write(f"ML Ticket {i+1}: {ml_ticket}")
 
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
