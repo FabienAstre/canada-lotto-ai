@@ -63,6 +63,7 @@ def compute_number_gaps(numbers_df, dates=None):
     gaps = {num: None for num in range(1, 50)}
 
     if dates is not None:
+        # Sort numbers_df by dates ascending
         numbers_df = numbers_df.iloc[dates.argsort()].reset_index(drop=True)
     else:
         numbers_df = numbers_df.reset_index(drop=True)
@@ -88,15 +89,28 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # Sort by date if present
+        # Show detected columns for debugging
+        st.write("Detected columns:", df.columns.tolist())
+
+        # Find the date column (case insensitive common names)
         date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
         if date_col:
+            # Parse dates safely
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+
+            # Debug: Show first few parsed dates
+            st.write("Date column after parsing:", df[date_col].dropna().head())
+
+            # Sort by date ascending (oldest first)
             df = df.sort_values(by=date_col)
 
-        # Show last 30 draws with dates if available
+        # Explicitly display the date column with other data
+        columns_to_display = df.columns.tolist()
+        if date_col and date_col not in columns_to_display:
+            columns_to_display.insert(0, date_col)  # Ensure date is first
+
         st.subheader("Uploaded Data (Last 30 draws, top = oldest):")
-        st.dataframe(df.tail(30).reset_index(drop=True))
+        st.dataframe(df.tail(30)[columns_to_display].reset_index(drop=True))
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
         if numbers_df is None:
