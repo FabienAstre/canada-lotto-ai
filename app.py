@@ -1,19 +1,4 @@
-import streamlit as st
-import pandas as pd
-from collections import Counter
-import random
-import plotly.express as px
-import plotly.graph_objects as go
-from itertools import combinations
-import numpy as np
-import io
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+# ... (same imports as before)
 
 # Streamlit page configuration
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
@@ -23,117 +8,7 @@ st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
 # Helper Functions
-def to_py_ticket(ticket):
-    return tuple(sorted(int(x) for x in ticket))
-
-def extract_numbers_and_bonus(df):
-    required_main_cols = [
-        "NUMBER DRAWN 1",
-        "NUMBER DRAWN 2",
-        "NUMBER DRAWN 3",
-        "NUMBER DRAWN 4",
-        "NUMBER DRAWN 5",
-        "NUMBER DRAWN 6",
-    ]
-    bonus_col = "BONUS NUMBER"
-
-    if not all(col in df.columns for col in required_main_cols):
-        return None, None, None
-
-    main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
-    if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
-        return None, None, None
-
-    bonus_series = None
-    if bonus_col in df.columns:
-        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
-        if not bonus_series.between(1, 49).all():
-            bonus_series = None
-
-    date_col = None
-    for col_candidate in ['DATE', 'Draw Date', 'Draw_Date', 'Date']:
-        if col_candidate in df.columns:
-            date_col = col_candidate
-            break
-
-    dates = None
-    if date_col:
-        try:
-            dates = pd.to_datetime(df[date_col], errors='coerce')
-        except:
-            dates = None
-
-    return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
-
-def load_from_google_sheet(sheet_id, range_name, creds_json):
-    # Load data from Google Sheets using gspread and OAuth2
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_json, scope)
-    client = gspread.authorize(creds)
-    
-    # Open the Google Sheet by ID
-    sheet = client.open_by_key(sheet_id)
-    worksheet = sheet.get_worksheet(0)  # First sheet
-    data = worksheet.get(range_name)  # Get range
-    
-    df = pd.DataFrame(data[1:], columns=data[0])  # Convert to DataFrame
-    return df
-
-@st.cache_data
-def compute_frequencies(numbers_df):
-    all_numbers = numbers_df.values.flatten()
-    return Counter(all_numbers)
-
-@st.cache_data
-def compute_pair_frequencies(numbers_df, limit=500):
-    pair_counts = Counter()
-    df_subset = numbers_df.tail(limit)
-    for _, row in df_subset.iterrows():
-        pairs = combinations(sorted(row.values), 2)
-        pair_counts.update(pairs)
-    return pair_counts
-
-def compute_number_gaps(numbers_df, dates=None):
-    last_seen = {num: -1 for num in range(1, 50)}
-    gaps = {num: None for num in range(1, 50)}
-
-    if dates is not None:
-        order = dates.argsort()
-        numbers_df = numbers_df.iloc[order].reset_index(drop=True)
-    else:
-        numbers_df = numbers_df.reset_index(drop=True)
-
-    for idx, row in numbers_df.iterrows():
-        for n in row.values:
-            last_seen[n] = idx
-
-    total_draws = len(numbers_df)
-    for num in range(1, 50):
-        gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
-    return gaps
-
-def generate_tickets_hot_cold(hot, cold, n_tickets):
-    tickets = set()
-    while len(tickets) < n_tickets:
-        n_hot = random.randint(2, min(4, len(hot)))
-        n_cold = random.randint(2, min(4, len(cold)))
-        pick_hot = random.sample(hot, n_hot)
-        pick_cold = random.sample(cold, n_cold)
-        current = set(pick_hot + pick_cold)
-        while len(current) < 6:
-            current.add(random.randint(1, 49))
-        tickets.add(to_py_ticket(current))
-    return list(tickets)
-
-def generate_tickets_weighted(counter, n_tickets):
-    numbers = np.array(range(1, 50))
-    freqs = np.array([counter.get(num, 0) for num in numbers])
-    weights = freqs + 1
-    tickets = set()
-    while len(tickets) < n_tickets:
-        ticket_np = np.random.choice(numbers, 6, replace=False, p=weights/weights.sum())
-        tickets.add(to_py_ticket(ticket_np))
-    return list(tickets)
+# ... (unchanged functions like to_py_ticket, extract_numbers_and_bonus, etc.)
 
 # Streamlit App
 uploaded_file = st.file_uploader(
@@ -146,8 +21,10 @@ if uploaded_file:
     try:
         # Read CSV data
         df = pd.read_csv(uploaded_file)
-        st.subheader("Uploaded Data (Last 30 draws):")
-        st.dataframe(df.tail(30))
+
+        # ✅ Show last 30 draws, reversed (most recent on top)
+        st.subheader("Uploaded Data (Last 30 draws, most recent first):")
+        st.dataframe(df.tail(30).iloc[::-1])
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
         if numbers_df is None:
@@ -185,9 +62,6 @@ if uploaded_file:
         gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
         overdue_threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= overdue_threshold])
-
-        # Advanced ticket generation, predictions, etc.
-        # You can add that section here if needed...
 
     except Exception as e:
         st.error(f"Error reading CSV: {e}")
