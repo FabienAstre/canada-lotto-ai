@@ -88,21 +88,20 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # --- ADJUSTED UPLOADED DATA DISPLAY ---
         # Find date column
         date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
         if date_col:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            df = df.sort_values(by=date_col)
+            # Sort descending = newest dates at top
+            df = df.sort_values(by=date_col, ascending=False)
 
         # Prepare columns to display including date column explicitly
         columns_to_display = df.columns.tolist()
         if date_col and date_col not in columns_to_display:
             columns_to_display.insert(0, date_col)  # put date first
 
-        st.subheader("Uploaded Data (Last 30 draws, top = oldest):")
-        st.dataframe(df.tail(30)[columns_to_display].reset_index(drop=True))
-        # --- END ADJUSTED DISPLAY ---
+        st.subheader("Uploaded Data (Last 30 draws, top = newest):")
+        st.dataframe(df.head(30)[columns_to_display].reset_index(drop=True))
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
         if numbers_df is None:
