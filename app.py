@@ -39,6 +39,15 @@ def extract_numbers_and_bonus(df):
     date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
     dates = None
     if date_col:
+        import re
+
+        def clean_date_str(date_str):
+            if pd.isna(date_str):
+                return date_str
+            # Remove 'st', 'nd', 'rd', 'th' from day part
+            return re.sub(r'(\d{1,2})(st|nd|rd|th)', r'\1', str(date_str))
+
+        df[date_col] = df[date_col].apply(clean_date_str)
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         dates = df[date_col]
 
