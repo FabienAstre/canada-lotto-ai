@@ -23,19 +23,23 @@ def extract_numbers_and_bonus(df):
     ]
     bonus_col = "BONUS NUMBER"
 
+    # Validate main columns
     if not all(col in df.columns for col in required_main_cols):
         return None, None, None
 
+    # Extract and validate main numbers
     main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
     if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
         return None, None, None
 
+    # Extract and validate bonus number
     bonus_series = None
     if bonus_col in df.columns:
         bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
         if not bonus_series.between(1, 49).all():
             bonus_series = None
 
+    # Identify and clean the date column
     date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
     dates = None
     if date_col:
@@ -44,12 +48,16 @@ def extract_numbers_and_bonus(df):
         def clean_date_str(date_str):
             if pd.isna(date_str):
                 return date_str
-            # Remove 'st', 'nd', 'rd', 'th' from day part
+            # Remove ordinal suffixes like 6th, 21st, 31th, etc.
             return re.sub(r'(\d{1,2})(st|nd|rd|th)', r'\1', str(date_str))
 
         df[date_col] = df[date_col].apply(clean_date_str)
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         dates = df[date_col]
+
+        # Optional: show rows with bad dates (for debugging)
+        # st.warning("⚠️ Rows with invalid dates:")
+        # st.dataframe(df[df[date_col].isna()])
 
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
 
