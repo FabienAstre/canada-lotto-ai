@@ -49,6 +49,7 @@ def extract_numbers_and_bonus(df):
         def clean_date_str(date_str):
             if pd.isna(date_str):
                 return date_str
+            # Remove ordinal suffixes like 6th, 21st, 31th, etc.
             return re.sub(r'(\d{1,2})(st|nd|rd|th)', r'\1', str(date_str))
 
         df[date_col] = df[date_col].apply(clean_date_str)
@@ -98,7 +99,6 @@ def compute_number_gaps(numbers_df, dates=None):
         gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
     return gaps
 
-# Most Common Number per Draw Position
 def most_common_per_draw_position(numbers_df):
     most_common_dict = {}
     for col in numbers_df.columns:
@@ -107,113 +107,13 @@ def most_common_per_draw_position(numbers_df):
         most_common_dict[col] = (int(most_common_num), freq)
     return most_common_dict
 
-# Number streaks: count how often each number appeared in consecutive draws
-def compute_streaks(numbers_df):
-    streaks = {num: 0 for num in range(1, 50)}
-    max_streaks = {num: 0 for num in range(1, 50)}
-    prev_draw = set()
-    for _, row in numbers_df.iterrows():
-        current_draw = set(row.values)
-        for num in range(1, 50):
-            if num in current_draw and num in prev_draw:
-                streaks[num] += 1
-                max_streaks[num] = max(max_streaks[num], streaks[num])
-            else:
-                streaks[num] = 0
-        prev_draw = current_draw
-    return max_streaks
+def chi_square_test(counter, total_draws):
+    observed = np.array([counter.get(i, 0) for i in range(1, 50)])
+    expected = np.full_like(observed, total_draws * 6 / 49)  # 6 numbers per draw, uniform dist.
+    chi2, p = chisquare(observed, expected)
+    return chi2, p
 
-# Bad pattern checks
-def is_bad_pattern(ticket):
-    # All even or all odd
-    if all(n % 2 == 0 for n in ticket) or all(n % 2 == 1 for n in ticket):
-        return True
-    # Sequential numbers (length >=3)
-    seq_count = 1
-    for i in range(1, len(ticket)):
-        if ticket[i] == ticket[i-1] + 1:
-            seq_count += 1
-            if seq_count >= 3:
-                return True
-        else:
-            seq_count = 1
-    # All numbers in one 10-number range
-    ranges = [(1,10),(11,20),(21,30),(31,40),(41,49)]
-    for r in ranges:
-        if all(r[0] <= n <= r[1] for n in ticket):
-            return True
-    return False
-
-# Weighted random sampling for ticket generation
-def generate_weighted_ticket(freq_counter, k=6, exclude_bad_patterns=True):
-    numbers = list(range(1, 50))
-    frequencies = np.array([freq_counter.get(n, 0) for n in numbers], dtype=float)
-    weights = frequencies + 1  # avoid zeros
-    weights /= weights.sum()
-    attempt = 0
-    while True:
-        attempt += 1
-        ticket = np.random.choice(numbers, size=k, replace=False, p=weights)
-        ticket = sorted(ticket)
-        if exclude_bad_patterns and is_bad_pattern(ticket):
-            if attempt > 100:
-                # fallback if too many attempts
-                break
-            continue
-        break
-    return ticket
-
-# Recency weighting: decay weights for older draws
-def compute_recency_weights(numbers_df):
-    n_draws = len(numbers_df)
-    decay_factor = 0.95  # exponential decay per draw (adjustable)
-    weights = {num: 0.0 for num in range(1, 50)}
-
-    for idx, row in numbers_df.iterrows():
-        weight = decay_factor ** (n_draws - idx - 1)
-        for num in row.values:
-            weights[num] += weight
-
-    # Normalize weights
-    total = sum(weights.values())
-    for num in weights:
-        weights[num] /= total
-    return weights
-
-# Bonus number frequency and gap analysis
-def analyze_bonus(bonus_series):
-    if bonus_series is None or bonus_series.empty:
-        return None, None
-    bonus_freq = Counter(bonus_series)
-    last_seen = {num: -1 for num in range(1, 50)}
-    for idx, num in enumerate(bonus_series):
-        last_seen[num] = idx
-    total = len(bonus_series)
-    bonus_gap = {num: total - 1 - last_seen[num] if last_seen[num] != -1 else total for num in range(1, 50)}
-    return bonus_freq, bonus_gap
-
-# Chi-square test for uniformity of number frequencies
-def perform_chi_square_test(freq_counter, total_draws):
-    observed = np.array([freq_counter.get(n, 0) for n in range(1, 50)])
-    expected = np.full(49, total_draws * 6 / 49)  # Expected frequency if uniform
-    chi2, p_value = chisquare(observed, expected)
-    return chi2, p_value
-
-# Plot frequency trend over time with moving average
-def plot_frequency_trends(numbers_df):
-    freq_over_time = pd.DataFrame(0, index=range(len(numbers_df)), columns=range(1,50))
-    for idx, row in numbers_df.iterrows():
-        for num in row.values:
-            freq_over_time.at[idx, num] = 1
-    freq_cumsum = freq_over_time.cumsum()
-    window = 20
-    freq_mavg = freq_cumsum.diff(window).fillna(0)
-
-    fig = px.line(freq_mavg, title=f"Frequency Moving Average (window={window} draws)")
-    fig.update_layout(xaxis_title="Draw Number (Oldest to Newest)", yaxis_title="Frequency")
-    return fig
-
-# --- App Main ---
+# --- Main App ---
 
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
@@ -225,36 +125,44 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # Find date column
+        # Find and parse date column
         date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
         if date_col:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            df = df.sort_values(by=date_col, ascending=True)  # Oldest first for trend analysis
+            df = df.sort_values(by=date_col, ascending=True)  # oldest first
 
-        columns_to_display = df.columns.tolist()
-        if date_col and date_col not in columns_to_display:
-            columns_to_display.insert(0, date_col)
-
+        # Display all columns of the uploaded data
         st.subheader("Uploaded Data (Last 300 draws):")
-        st.dataframe(df.tail(300)[columns_to_display].reset_index(drop=True))
+        st.dataframe(df.tail(300).reset_index(drop=True))
 
-        numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
+        # Allow user to select how many recent draws to use for analysis
+        max_draws = len(df)
+        st.subheader("Select Number of Recent Draws for Analysis")
+        draws_to_use = st.slider("Number of draws", min_value=50, max_value=min(1000, max_draws), value=min(300, max_draws), step=10)
+
+        # Filter data to last `draws_to_use` draws (most recent)
+        df_used = df.tail(draws_to_use).reset_index(drop=True)
+
+        # Extract numbers and bonus from filtered data
+        numbers_df, bonus_series, dates = extract_numbers_and_bonus(df_used)
         if numbers_df is None:
             st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
             st.stop()
 
+        # Compute frequencies and stats based on filtered data
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
         gaps = compute_number_gaps(numbers_df, dates)
 
+        # Hot & Cold numbers display
         st.subheader("Hot Numbers:")
         st.write(", ".join(map(str, hot)))
 
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
 
-        # Most common numbers per draw position
+        # Most Common Numbers Per Draw Position
         position_most_common = most_common_per_draw_position(numbers_df)
         st.subheader("Most Common Numbers by Draw Position:")
         for position, (num, freq) in position_most_common.items():
@@ -264,12 +172,12 @@ if uploaded_file:
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
         freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
         fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency",
-                     title="Number Frequency", color_continuous_scale="Blues")
+                     title=f"Number Frequency (last {draws_to_use} draws)", color_continuous_scale="Blues")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Pair Frequency
-        st.subheader("Number Pair Frequency (last 500 draws)")
-        pair_counts = compute_pair_frequencies(numbers_df)
+        # Pair Frequency (top 20 pairs)
+        st.subheader(f"Number Pair Frequency (last {draws_to_use} draws)")
+        pair_counts = compute_pair_frequencies(numbers_df, limit=draws_to_use)
         pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"])\
             .sort_values(by="Count", ascending=False).head(20)
         pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
@@ -278,12 +186,12 @@ if uploaded_file:
         fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
-        # Triplet Frequency
-        st.subheader("Number Triplet Frequency (last 500 draws)")
-        triplet_counts = compute_triplet_frequencies(numbers_df)
+        # Triplet Frequency (top 20 triplets)
+        st.subheader(f"Number Triplet Frequency (last {draws_to_use} draws)")
+        triplet_counts = compute_triplet_frequencies(numbers_df, limit=draws_to_use)
         triplets_df = pd.DataFrame(triplet_counts.items(), columns=["Triplet", "Count"])\
-            .sort_values(by="Count", ascending=False).head(10)
-        triplets_df["Triplet"] = triplets_df["Triplet"].apply(lambda x: f"{x[0]}, {x[1]} & {x[2]}")
+            .sort_values(by="Count", ascending=False).head(20)
+        triplets_df["Triplet"] = triplets_df["Triplet"].apply(lambda x: f"{x[0]} & {x[1]} & {x[2]}")
         fig_triplets = px.bar(triplets_df, y="Triplet", x="Count", orientation='h', color="Count",
                              color_continuous_scale="Cividis")
         fig_triplets.update_layout(yaxis={'categoryorder': 'total ascending'})
@@ -296,52 +204,24 @@ if uploaded_file:
         threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= threshold])
 
-        # Number streaks
-        st.subheader("Number Streaks (Max Consecutive Draws)")
-        streaks = compute_streaks(numbers_df)
-        streaks_df = pd.DataFrame({"Number": list(streaks.keys()), "Max Streak": list(streaks.values())})\
-            .sort_values(by="Max Streak", ascending=False)
-        st.dataframe(streaks_df.head(15))
-
-        # Bonus number analysis
-        st.subheader("Bonus Number Analysis")
-        bonus_freq, bonus_gap = analyze_bonus(bonus_series)
-        if bonus_freq:
-            bonus_freq_df = pd.DataFrame({"Number": list(bonus_freq.keys()), "Frequency": list(bonus_freq.values())})\
-                .sort_values(by="Frequency", ascending=False)
-            st.write("Bonus Number Frequencies:")
-            st.dataframe(bonus_freq_df.head(10))
-
-            bonus_gap_df = pd.DataFrame({"Number": list(bonus_gap.keys()), "Gap": list(bonus_gap.values())})\
-                .sort_values(by="Gap", ascending=False)
-            st.write("Bonus Number Gap Analysis:")
-            st.dataframe(bonus_gap_df.head(10))
-        else:
-            st.write("No valid bonus number data found.")
-
-        # Frequency trend over time
-        st.subheader("Frequency Trend Over Time (Moving Average)")
-        fig_trend = plot_frequency_trends(numbers_df)
-        st.plotly_chart(fig_trend, use_container_width=True)
-
-        # Statistical uniformity test
-        st.subheader("Chi-Square Test for Uniformity")
-        chi2, p_val = perform_chi_square_test(counter, len(numbers_df))
+        # Chi-square test for uniformity
+        st.subheader("Chi-Square Test for Uniform Distribution")
+        chi2, p_val = chi_square_test(counter, draws_to_use)
         st.write(f"Chi-square statistic: {chi2:.2f}")
-        st.write(f"P-value: {p_val:.4f} (higher means numbers appear more uniformly)")
+        st.write(f"P-value: {p_val:.4f}")
+        if p_val < 0.05:
+            st.write("⚠️ Numbers are **not uniformly distributed** (reject null hypothesis).")
+        else:
+            st.write("✅ Numbers appear to be uniformly distributed (fail to reject null hypothesis).")
 
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
 
         strategy = st.selectbox(
             "Strategy for ticket generation",
-            ["Pure Random", "Bias: Hot", "Bias: Cold", "Bias: Overdue", "Mixed", "Weighted Frequencies"]
+            ["Pure Random", "Bias: Hot", "Bias: Cold", "Bias: Overdue", "Mixed"]
         )
         num_tickets = st.slider("How many tickets do you want to generate?", 1, 10, 5)
-
-        # Recency weighting option
-        use_recency = st.checkbox("Use Recency Weighted Frequencies?", value=False)
-        recency_weights = compute_recency_weights(numbers_df) if use_recency else None
 
         def generate_ticket(pool):
             return sorted(random.sample(pool, 6))
@@ -350,57 +230,30 @@ if uploaded_file:
         for _ in range(num_tickets):
             if strategy == "Pure Random":
                 pool = list(range(1, 50))
-                ticket = generate_ticket(pool)
-
             elif strategy == "Bias: Hot":
                 pool = hot + random.sample([n for n in range(1, 50) if n not in hot], 43)
-                ticket = generate_ticket(pool)
-
             elif strategy == "Bias: Cold":
                 pool = cold + random.sample([n for n in range(1, 50) if n not in cold], 43)
-                ticket = generate_ticket(pool)
-
             elif strategy == "Bias: Overdue":
                 sorted_by_gap = sorted(gaps.items(), key=lambda x: x[1], reverse=True)
                 top_gap = [n for n, g in sorted_by_gap[:10]]
                 pool = top_gap + random.sample([n for n in range(1, 50) if n not in top_gap], 39)
-                ticket = generate_ticket(pool)
-
             elif strategy == "Mixed":
                 pool = hot[:3] + cold[:2]
                 pool += random.sample([n for n in range(1, 50) if n not in pool], 49 - len(pool))
-                ticket = generate_ticket(pool)
-
-            elif strategy == "Weighted Frequencies":
-                if recency_weights:
-                    weights = np.array([recency_weights[n] for n in range(1, 50)])
-                    numbers = list(range(1, 50))
-                    ticket = []
-                    attempt = 0
-                    while len(ticket) < 6 and attempt < 100:
-                        attempt += 1
-                        candidate = np.random.choice(numbers, p=weights)
-                        if candidate not in ticket:
-                            ticket.append(candidate)
-                    ticket = sorted(ticket)
-                    if is_bad_pattern(ticket):
-                        ticket = generate_weighted_ticket(counter)
-                else:
-                    ticket = generate_weighted_ticket(counter)
-
             else:
                 pool = list(range(1, 50))
-                ticket = generate_ticket(pool)
-
-            generated_tickets.append(ticket)
+            ticket = generate_ticket(pool)
+            generated_tickets.append([int(n) for n in ticket])
 
         st.write("🎰 Your Generated Tickets:")
         for idx, ticket in enumerate(generated_tickets, 1):
-            st.write(f"Ticket {idx}: {[int(n) for n in ticket]}")  # <-- Conversion here
+            st.write(f"Ticket {idx}: {ticket}")
 
-        # 🧠 ML-based Prediction (Improved)
+        # 🧠 ML-based Prediction (Experimental)
         st.subheader("🧠 ML-Based Prediction (Experimental)")
 
+        # User inputs for ML tickets:
         must_include = st.multiselect(
             "Select numbers you want to include in every ML ticket",
             options=list(range(1, 50)),
@@ -409,8 +262,8 @@ if uploaded_file:
 
         num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
 
-        most_common = counter.most_common(12)
-        predicted_numbers = sorted([int(num) for num, _ in most_common])
+        # Use top 12 most common numbers as base prediction pool
+        predicted_numbers = [int(num) for num, _ in counter.most_common(12)]
 
         st.write("Base Predicted Numbers (top 12 most common):")
         st.write(predicted_numbers)
@@ -446,7 +299,7 @@ if uploaded_file:
         st.write("Generated ML Tickets:")
         for i in range(num_ml_tickets):
             ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
-            st.write(f"ML Ticket {i+1}: {[int(n) for n in ml_ticket]}")  # <-- Conversion here
+            st.write(f"ML Ticket {i+1}: {[int(n) for n in ml_ticket]}")
 
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
