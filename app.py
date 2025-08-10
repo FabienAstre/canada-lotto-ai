@@ -61,7 +61,63 @@ def extract_numbers_and_bonus(df):
 def compute_frequencies(numbers_df):
     all_numbers = numbers_df.values.flatten()
     return Counter(all_numbers)
+# After computing position_most_common ...
 
+# Position-based prediction ticket
+def generate_position_based_ticket(position_most_common, must_include=[]):
+    ticket = []
+    for pos in sorted(position_most_common.keys()):
+        num = position_most_common[pos][0]
+        ticket.append(num)
+    ticket = list(set(ticket))  # remove duplicates if any
+
+    # Add must_include numbers if not already in ticket
+    for n in must_include:
+        if n not in ticket:
+            ticket.append(n)
+
+    # If ticket < 6, fill with random numbers not in ticket
+    while len(ticket) < 6:
+        candidate = random.randint(1, 49)
+        if candidate not in ticket:
+            ticket.append(candidate)
+
+    # If ticket > 6 (because of must_include), randomly drop extras except must_include
+    while len(ticket) > 6:
+        removable = [n for n in ticket if n not in must_include]
+        if not removable:
+            break
+        to_remove = random.choice(removable)
+        ticket.remove(to_remove)
+
+    # Swap 1-2 numbers randomly (excluding must_include) for variation
+    swap_count = random.randint(1, 2)
+    for _ in range(swap_count):
+        idx = random.randint(0, 5)
+        if ticket[idx] in must_include:
+            continue
+        available = [n for n in range(1, 50) if n not in ticket]
+        if not available:
+            break
+        ticket[idx] = random.choice(available)
+
+    return sorted(ticket)
+
+# --- Below your ML prediction section ---
+
+# Add UI for must_include numbers for position-based model
+must_include_pos = st.multiselect(
+    "Select numbers to always include in Position-Based Prediction",
+    options=list(range(1, 50)),
+    default=[]
+)
+
+num_pos_pred_tickets = st.slider("How many Position-Based predicted tickets to generate?", 1, 10, 3)
+
+st.subheader("Position-Based Predicted Tickets:")
+for i in range(num_pos_pred_tickets):
+    pos_ticket = generate_position_based_ticket(position_most_common, must_include_pos)
+    st.write(f"Position-Based Ticket {i+1}: {pos_ticket}")
 @st.cache_data
 def compute_pair_frequencies(numbers_df, limit=500):
     pair_counts = Counter()
