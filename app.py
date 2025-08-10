@@ -5,7 +5,6 @@ from collections import Counter
 from itertools import combinations
 import random
 import plotly.express as px
-from scipy.stats import chisquare
 
 # Streamlit config
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
@@ -125,14 +124,14 @@ if uploaded_file:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             df = df.sort_values(by=date_col, ascending=True)  # oldest first
 
-        # Display all columns of the uploaded data
-        st.subheader("Uploaded Data (Last 300 draws):")
-        st.dataframe(df.tail(300).reset_index(drop=True))
+        # Display all data uploaded (all rows)
+        st.subheader(f"Uploaded Data (All {len(df)} draws):")
+        st.dataframe(df.reset_index(drop=True))
 
         # Allow user to select how many recent draws to use for analysis
         max_draws = len(df)
         st.subheader("Select Number of Recent Draws for Analysis")
-        draws_to_use = st.slider("Number of draws", min_value=50, max_value=min(1000, max_draws), value=min(300, max_draws), step=10)
+        draws_to_use = st.slider("Number of draws", min_value=50, max_value=max_draws, value=min(300, max_draws), step=10)
 
         # Filter data to last `draws_to_use` draws (most recent)
         df_used = df.tail(draws_to_use).reset_index(drop=True)
@@ -198,16 +197,6 @@ if uploaded_file:
         threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= threshold])
 
-        # Chi-square test for uniformity
-        st.subheader("Chi-Square Test for Uniform Distribution")
-        chi2, p_val = chi_square_test(counter, draws_to_use)
-        st.write(f"Chi-square statistic: {chi2:.2f}")
-        st.write(f"P-value: {p_val:.4f}")
-        if p_val < 0.05:
-            st.write("⚠️ Numbers are **not uniformly distributed** (reject null hypothesis).")
-        else:
-            st.write("✅ Numbers appear to be uniformly distributed (fail to reject null hypothesis).")
-
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
 
@@ -247,7 +236,6 @@ if uploaded_file:
         # 🧠 ML-based Prediction (Experimental)
         st.subheader("🧠 ML-Based Prediction (Experimental)")
 
-        # User inputs for ML tickets:
         must_include = st.multiselect(
             "Select numbers you want to include in every ML ticket",
             options=list(range(1, 50)),
@@ -256,7 +244,6 @@ if uploaded_file:
 
         num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
 
-        # Use top 12 most common numbers as base prediction pool
         predicted_numbers = [int(num) for num, _ in counter.most_common(12)]
 
         st.write("Base Predicted Numbers (top 12 most common):")
@@ -293,7 +280,7 @@ if uploaded_file:
         st.write("Generated ML Tickets:")
         for i in range(num_ml_tickets):
             ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
-            st.write(f"ML Ticket {i+1}: {[int(n) for n in ml_ticket]}")
+            st.write(f"ML Ticket {i+1}: {ml_ticket}")
 
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
