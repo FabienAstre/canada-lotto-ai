@@ -89,6 +89,15 @@ def compute_number_gaps(numbers_df, dates=None):
         gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
     return gaps
 
+# New helper function for most common number per draw position
+def most_common_per_draw_position(numbers_df):
+    most_common_dict = {}
+    for col in numbers_df.columns:
+        counts = Counter(numbers_df[col])
+        most_common_num, freq = counts.most_common(1)[0]
+        most_common_dict[col] = (int(most_common_num), freq)
+    return most_common_dict
+
 # --- App Main ---
 
 uploaded_file = st.file_uploader(
@@ -134,6 +143,12 @@ if uploaded_file:
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
 
+        # Most Common Numbers Per Draw Position
+        position_most_common = most_common_per_draw_position(numbers_df)
+        st.subheader("Most Common Numbers by Draw Position:")
+        for position, (num, freq) in position_most_common.items():
+            st.write(f"{position}: {num} (appeared {freq} times)")
+
         # Frequency Chart
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
         freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
@@ -152,7 +167,7 @@ if uploaded_file:
         fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
-        # Gap Analysis (You can remove if not wanted)
+        # Gap Analysis (optional, remove if you want)
         st.subheader("Number Gap Analysis")
         gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())})\
             .sort_values(by="Gap", ascending=False)
@@ -209,7 +224,6 @@ if uploaded_file:
         num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
 
         most_common = counter.most_common(6)
-        # Convert to plain Python int to avoid np.int64 display
         predicted_numbers = sorted([int(num) for num, _ in most_common])
 
         st.write("Base Predicted Numbers (most common 6):")
@@ -233,7 +247,6 @@ if uploaded_file:
             swap_count = random.randint(1, 2)
             for _ in range(swap_count):
                 idx_to_swap = random.randint(0, 5)
-                # Only swap if the number is NOT in must_include
                 if ticket[idx_to_swap] in must_include:
                     continue
                 available_nums = [n for n in range(1, 50) if n not in ticket]
@@ -242,7 +255,6 @@ if uploaded_file:
                 new_num = random.choice(available_nums)
                 ticket[idx_to_swap] = new_num
 
-            # Return sorted list of ints (to avoid np.int64 in output)
             return sorted(int(n) for n in ticket)
 
         st.write("Generated ML Tickets:")
