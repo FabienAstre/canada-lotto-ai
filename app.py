@@ -107,14 +107,6 @@ def most_common_per_draw_position(numbers_df):
         most_common_dict[col] = (int(most_common_num), freq)
     return most_common_dict
 
-def chi_square_test(counter, total_draws):
-    observed = np.array([counter.get(i, 0) for i in range(1, 50)])
-    total_observed = observed.sum()
-    # Uniform expected frequencies summing to total_observed
-    expected = np.full_like(observed, total_observed / 49)
-    chi2, p = chisquare(observed, expected)
-    return chi2, p
-
 # --- Main App ---
 
 uploaded_file = st.file_uploader(
