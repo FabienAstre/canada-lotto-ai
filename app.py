@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from collections import Counter
 from itertools import combinations
 import random
@@ -12,7 +11,6 @@ st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
 # --- Helper Functions ---
-
 def extract_numbers_and_bonus(df):
     required_main_cols = [
         "NUMBER DRAWN 1", "NUMBER DRAWN 2", "NUMBER DRAWN 3",
@@ -20,23 +18,19 @@ def extract_numbers_and_bonus(df):
     ]
     bonus_col = "BONUS NUMBER"
 
-    # Validate main columns
     if not all(col in df.columns for col in required_main_cols):
         return None, None, None
 
-    # Extract and validate main numbers
     main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
     if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
         return None, None, None
 
-    # Extract and validate bonus number
     bonus_series = None
     if bonus_col in df.columns:
         bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
         if not bonus_series.between(1, 49).all():
             bonus_series = None
 
-    # Identify and clean the date column
     date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
     dates = None
     if date_col:
@@ -67,7 +61,6 @@ def compute_pair_frequencies(numbers_df, limit=150):
     return pair_counts
 
 # --- App Main ---
-
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -78,7 +71,7 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # Find date column and sort
+        # Sort by date if exists
         date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
         if date_col:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
@@ -94,20 +87,20 @@ if uploaded_file:
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
 
-        # Add most common number(s) for each draw
-        freq_map = dict(counter)
-        most_common_per_draw = []
-        for _, row in numbers_df.iterrows():
-            row_numbers = list(row.values)
-            max_freq = max(freq_map[n] for n in row_numbers)
-            common_nums = [n for n in row_numbers if freq_map[n] == max_freq]
-            most_common_per_draw.append(", ".join(map(str, sorted(common_nums))))
-        df["Most Common (This Draw)"] = most_common_per_draw
+        # 🔹 Add summary row with most common number(s) overall
+        max_freq = max(counter.values())
+        most_common_all = [n for n, freq in counter.items() if freq == max_freq]
+        most_common_str = ", ".join(map(str, sorted(most_common_all)))
 
-        # Display uploaded data
-        columns_to_display = df.columns.tolist()
+        summary_row = {col: "" for col in df.columns}
+        if date_col:
+            summary_row[date_col] = "Most Common Overall"
+        summary_row["NUMBER DRAWN 1"] = most_common_str
+        df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
+
+        # Display data
         st.subheader("Uploaded Data (Last 300 draws, top = newest):")
-        st.dataframe(df.head(300)[columns_to_display].reset_index(drop=True))
+        st.dataframe(df.head(300).reset_index(drop=True))
 
         # Hot & Cold numbers
         st.subheader("Hot Numbers:")
@@ -156,16 +149,14 @@ if uploaded_file:
             elif strategy == "Mixed":
                 pool = hot[:3] + cold[:2]
                 pool += random.sample([n for n in range(1, 50) if n not in pool], 49 - len(pool))
-            else:
-                pool = list(range(1, 50))
             ticket = generate_ticket(pool)
-            generated_tickets.append([int(n) for n in ticket])
+            generated_tickets.append(ticket)
 
         st.write("🎰 Your Generated Tickets:")
         for idx, ticket in enumerate(generated_tickets, 1):
             st.write(f"Ticket {idx}: {ticket}")
 
-        # ML-based prediction (experimental)
+        # ML-based prediction
         st.subheader("🧠 ML-Based Prediction (Experimental)")
         must_include = st.multiselect(
             "Select numbers you want to include in every ML ticket",
@@ -175,7 +166,7 @@ if uploaded_file:
         num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
 
         most_common = counter.most_common(6)
-        predicted_numbers = sorted([int(num) for num, _ in most_common])
+        predicted_numbers = sorted([num for num, _ in most_common])
         st.write("Base Predicted Numbers (most common 6):")
         st.write(predicted_numbers)
 
@@ -193,7 +184,6 @@ if uploaded_file:
                 if remaining_needed > 0:
                     ticket += random.sample(remaining_pool, remaining_needed)
 
-            # Add randomness
             swap_count = random.randint(1, 2)
             for _ in range(swap_count):
                 idx_to_swap = random.randint(0, 5)
