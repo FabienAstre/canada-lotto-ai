@@ -1,205 +1,80 @@
-import streamlit as st
 import pandas as pd
-from collections import Counter
-from itertools import combinations
-import random
-import plotly.express as px
+import numpy as np
+import streamlit as st
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 
-# Streamlit config
-st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
-st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
-
-# --- Helper Functions ---
-def extract_numbers_and_bonus(df):
-    required_main_cols = [
-        "NUMBER DRAWN 1", "NUMBER DRAWN 2", "NUMBER DRAWN 3",
-        "NUMBER DRAWN 4", "NUMBER DRAWN 5", "NUMBER DRAWN 6",
-    ]
-    bonus_col = "BONUS NUMBER"
-
-    if not all(col in df.columns for col in required_main_cols):
-        return None, None, None
-
-    main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
-    if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
-        return None, None, None
-
-    bonus_series = None
-    if bonus_col in df.columns:
-        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
-        if not bonus_series.between(1, 49).all():
-            bonus_series = None
-
-    date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
-    dates = None
-    if date_col:
-        import re
-        def clean_date_str(date_str):
-            if pd.isna(date_str):
-                return date_str
-            return re.sub(r'(\d{1,2})(st|nd|rd|th)', r'\1', str(date_str))
-
-        df[date_col] = df[date_col].apply(clean_date_str)
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-        dates = df[date_col]
-
-    return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
-
+# Load and clean data
 @st.cache_data
-def compute_frequencies(numbers_df):
-    all_numbers = numbers_df.values.flatten()
-    return Counter(all_numbers)
+def load_data(file):
+    df = pd.read_csv(file)
+    
+    # Ensure numeric columns for lotto numbers
+    number_cols = [col for col in df.columns if col.lower().startswith('num')]
+    for col in number_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    df.dropna(subset=number_cols, inplace=True)
+    return df, number_cols
 
-@st.cache_data
-def compute_pair_frequencies(numbers_df, limit=150):
-    pair_counts = Counter()
-    df_subset = numbers_df.tail(limit)
-    for _, row in df_subset.iterrows():
-        pairs = combinations(sorted(row.values), 2)
-        pair_counts.update(pairs)
-    return pair_counts
+# Machine Learning prediction function
+def predict_numbers(df, number_cols):
+    # Prepare training data
+    X = []
+    y = []
+    for col in number_cols:
+        col_nums = df[col].values
+        for num in range(1, 50):
+            X.append([num])
+            y.append(1 if num in col_nums else 0)
+    
+    X = np.array(X)
+    y = np.array(y)
 
-# --- App Main ---
-uploaded_file = st.file_uploader(
-    "Upload a Lotto 6/49 CSV file",
-    type=["csv"],
-    help="CSV with columns: NUMBER DRAWN 1 to 6, BONUS NUMBER, and optional DATE"
-)
+    model = LogisticRegression()
+    model.fit(X, y)
+    
+    # Predict probabilities
+    probs = model.predict_proba(np.arange(1, 50).reshape(-1, 1))[:, 1]
+    
+    # Pick top 6 numbers
+    top_numbers = np.argsort(probs)[-6:][::-1] + 1
+    return list(map(int, top_numbers))  # convert np.int64 to int
 
-if uploaded_file:
-    try:
-        df = pd.read_csv(uploaded_file)
+# Generate ML tickets
+def generate_ml_tickets(base_numbers, n_tickets=3):
+    tickets = []
+    for _ in range(n_tickets):
+        ticket = base_numbers.copy()
+        while len(ticket) < 6:
+            rand_num = np.random.randint(1, 50)
+            if rand_num not in ticket:
+                ticket.append(rand_num)
+        np.random.shuffle(ticket)
+        tickets.append(list(map(int, ticket)))  # convert to plain int
+    return tickets
 
-        # Sort by date if exists
-        date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
-        if date_col:
-            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            df = df.sort_values(by=date_col, ascending=False)
+# Streamlit app
+st.title("Lotto 6/49 Analyzer with ML Predictions")
 
-        numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
-        if numbers_df is None:
-            st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
-            st.stop()
+uploaded_file = st.file_uploader("Upload your Lotto CSV file", type=["csv"])
 
-        # Frequencies
-        counter = compute_frequencies(numbers_df)
-        hot = [num for num, _ in counter.most_common(6)]
-        cold = [num for num, _ in counter.most_common()[:-7:-1]]
+if uploaded_file is not None:
+    df, number_cols = load_data(uploaded_file)
 
-        # 🔹 Add summary row with most common number(s) overall
-        max_freq = max(counter.values())
-        most_common_all = [n for n, freq in counter.items() if freq == max_freq]
-        most_common_str = ", ".join(map(str, sorted(most_common_all)))
+    # Show data
+    with st.expander("View Uploaded Data"):
+        st.dataframe(df)
 
-        summary_row = {col: "" for col in df.columns}
-        if date_col:
-            summary_row[date_col] = "Most Common Overall"
-        summary_row["NUMBER DRAWN 1"] = most_common_str
-        df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
+    # ML prediction
+    base_predicted_numbers = predict_numbers(df, number_cols)
+    
+    st.subheader("Base Predicted Numbers (most common 6):")
+    st.write(base_predicted_numbers)
 
-        # Display data
-        st.subheader("Uploaded Data (Last 300 draws, top = newest):")
-        st.dataframe(df.head(300).reset_index(drop=True))
-
-        # Hot & Cold numbers
-        st.subheader("Hot Numbers:")
-        st.write(", ".join(map(str, hot)))
-
-        st.subheader("Cold Numbers:")
-        st.write(", ".join(map(str, cold)))
-
-        # Frequency chart
-        freq_df = pd.DataFrame({"Number": list(range(1, 50))})
-        freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
-        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency",
-                     title="Number Frequency", color_continuous_scale="Blues")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Pair frequency chart
-        st.subheader("Number Pair Frequency (last 150 draws)")
-        pair_counts = compute_pair_frequencies(numbers_df)
-        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]) \
-            .sort_values(by="Count", ascending=False).head(20)
-        pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count",
-                           color_continuous_scale="Viridis")
-        fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig_pairs, use_container_width=True)
-
-        # Ticket generator
-        st.subheader("🎟️ Generate Lotto Tickets")
-        strategy = st.selectbox(
-            "Strategy for ticket generation",
-            ["Pure Random", "Bias: Hot", "Bias: Cold", "Mixed"]
-        )
-        num_tickets = st.slider("How many tickets do you want to generate?", 1, 10, 5)
-
-        def generate_ticket(pool):
-            return sorted(random.sample(pool, 6))
-
-        generated_tickets = []
-        for _ in range(num_tickets):
-            if strategy == "Pure Random":
-                pool = list(range(1, 50))
-            elif strategy == "Bias: Hot":
-                pool = hot + random.sample([n for n in range(1, 50) if n not in hot], 43)
-            elif strategy == "Bias: Cold":
-                pool = cold + random.sample([n for n in range(1, 50) if n not in cold], 43)
-            elif strategy == "Mixed":
-                pool = hot[:3] + cold[:2]
-                pool += random.sample([n for n in range(1, 50) if n not in pool], 49 - len(pool))
-            ticket = generate_ticket(pool)
-            generated_tickets.append(ticket)
-
-        st.write("🎰 Your Generated Tickets:")
-        for idx, ticket in enumerate(generated_tickets, 1):
-            st.write(f"Ticket {idx}: {ticket}")
-
-        # ML-based prediction
-        st.subheader("🧠 ML-Based Prediction (Experimental)")
-        must_include = st.multiselect(
-            "Select numbers you want to include in every ML ticket",
-            options=list(range(1, 50)),
-            default=[]
-        )
-        num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
-
-        most_common = counter.most_common(6)
-        predicted_numbers = sorted([num for num, _ in most_common])
-        st.write("Base Predicted Numbers (most common 6):")
-        st.write(predicted_numbers)
-
-        def generate_ml_ticket(must_include, predicted_numbers):
-            ticket = must_include.copy()
-            pool = [n for n in predicted_numbers if n not in ticket]
-            needed = 6 - len(ticket)
-
-            if len(pool) >= needed:
-                ticket += random.sample(pool, needed)
-            else:
-                ticket += pool
-                remaining_needed = 6 - len(ticket)
-                remaining_pool = [n for n in range(1, 50) if n not in ticket]
-                if remaining_needed > 0:
-                    ticket += random.sample(remaining_pool, remaining_needed)
-
-            swap_count = random.randint(1, 2)
-            for _ in range(swap_count):
-                idx_to_swap = random.randint(0, 5)
-                if ticket[idx_to_swap] in must_include:
-                    continue
-                available_nums = [n for n in range(1, 50) if n not in ticket]
-                if available_nums:
-                    ticket[idx_to_swap] = random.choice(available_nums)
-            return sorted(ticket)
-
-        st.write("Generated ML Tickets:")
-        for i in range(num_ml_tickets):
-            ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
-            st.write(f"ML Ticket {i+1}: {ml_ticket}")
-
-    except Exception as e:
-        st.error(f"❌ Error reading CSV: {e}")
-else:
-    st.info("Please upload a CSV file with Lotto 6/49 draw results.")
+    # Generated ML tickets
+    ml_tickets = generate_ml_tickets(base_predicted_numbers, n_tickets=3)
+    
+    st.subheader("Generated ML Tickets:")
+    for i, ticket in enumerate(ml_tickets, start=1):
+        st.write(f"ML Ticket {i}: {ticket}")
