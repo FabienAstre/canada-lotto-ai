@@ -398,4 +398,59 @@ if uploaded_file:
 
         st.write("🎰 Your Generated Tickets:")
         for idx, ticket in enumerate(generated_tickets, 1):
-            st.write(f"Ticket {idx
+            st.write(f"Ticket {idx}: {ticket}")
+
+        # 🧠 ML-based Prediction (Improved)
+        st.subheader("🧠 ML-Based Prediction (Experimental)")
+
+        must_include = st.multiselect(
+            "Select numbers you want to include in every ML ticket",
+            options=list(range(1, 50)),
+            default=[]
+        )
+
+        num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
+
+        most_common = counter.most_common(12)
+        predicted_numbers = sorted([int(num) for num, _ in most_common])
+
+        st.write("Base Predicted Numbers (top 12 most common):")
+        st.write(predicted_numbers)
+
+        def generate_ml_ticket(must_include, predicted_numbers):
+            ticket = must_include.copy()
+            pool = [n for n in predicted_numbers if n not in ticket]
+            needed = 6 - len(ticket)
+
+            if len(pool) >= needed:
+                ticket += random.sample(pool, needed)
+            else:
+                ticket += pool
+                remaining_needed = 6 - len(ticket)
+                remaining_pool = [n for n in range(1, 50) if n not in ticket]
+                if remaining_needed > 0:
+                    ticket += random.sample(remaining_pool, remaining_needed)
+
+            # Add randomness: swap 1-2 numbers randomly (except must_include)
+            swap_count = random.randint(1, 2)
+            for _ in range(swap_count):
+                idx_to_swap = random.randint(0, 5)
+                if ticket[idx_to_swap] in must_include:
+                    continue
+                available_nums = [n for n in range(1, 50) if n not in ticket]
+                if not available_nums:
+                    break
+                new_num = random.choice(available_nums)
+                ticket[idx_to_swap] = new_num
+
+            return sorted(int(n) for n in ticket)
+
+        st.write("Generated ML Tickets:")
+        for i in range(num_ml_tickets):
+            ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
+            st.write(f"ML Ticket {i+1}: {ml_ticket}")
+
+    except Exception as e:
+        st.error(f"❌ Error reading CSV: {e}")
+else:
+    st.info("Please upload a CSV file with Lotto 6/49 draw results.")
