@@ -372,7 +372,6 @@ if uploaded_file:
                 ticket = generate_ticket(pool)
 
             elif strategy == "Weighted Frequencies":
-                # Use recency weights if checked, else use frequency counter
                 if recency_weights:
                     weights = np.array([recency_weights[n] for n in range(1, 50)])
                     numbers = list(range(1, 50))
@@ -384,7 +383,6 @@ if uploaded_file:
                         if candidate not in ticket:
                             ticket.append(candidate)
                     ticket = sorted(ticket)
-                    # Avoid bad patterns
                     if is_bad_pattern(ticket):
                         ticket = generate_weighted_ticket(counter)
                 else:
@@ -398,7 +396,7 @@ if uploaded_file:
 
         st.write("🎰 Your Generated Tickets:")
         for idx, ticket in enumerate(generated_tickets, 1):
-            st.write(f"Ticket {idx}: {ticket}")
+            st.write(f"Ticket {idx}: {[int(n) for n in ticket]}")  # <-- Conversion here
 
         # 🧠 ML-based Prediction (Improved)
         st.subheader("🧠 ML-Based Prediction (Experimental)")
@@ -448,7 +446,7 @@ if uploaded_file:
         st.write("Generated ML Tickets:")
         for i in range(num_ml_tickets):
             ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
-            st.write(f"ML Ticket {i+1}: {ml_ticket}")
+            st.write(f"ML Ticket {i+1}: {[int(n) for n in ml_ticket]}")  # <-- Conversion here
 
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
