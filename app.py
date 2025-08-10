@@ -67,7 +67,7 @@ def compute_frequencies(numbers_df):
     return Counter(all_numbers)
 
 @st.cache_data
-def compute_pair_frequencies(numbers_df, limit=50):
+def compute_pair_frequencies(numbers_df, limit=150):
     pair_counts = Counter()
     df_subset = numbers_df.tail(limit)
     for _, row in df_subset.iterrows():
@@ -117,7 +117,7 @@ if uploaded_file:
         if date_col and date_col not in columns_to_display:
             columns_to_display.insert(0, date_col)  # put date first
 
-        st.subheader("Uploaded Data (Last 30 draws, top = newest):")
+        st.subheader("Uploaded Data (Last 130 draws, top = newest):")
         st.dataframe(df.head(300)[columns_to_display].reset_index(drop=True))
 
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
