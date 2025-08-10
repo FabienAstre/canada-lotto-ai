@@ -67,7 +67,7 @@ def compute_frequencies(numbers_df):
     return Counter(all_numbers)
 
 @st.cache_data
-def compute_pair_frequencies(numbers_df, limit=500):
+def compute_pair_frequencies(numbers_df, limit=50):
     pair_counts = Counter()
     df_subset = numbers_df.tail(limit)
     for _, row in df_subset.iterrows():
