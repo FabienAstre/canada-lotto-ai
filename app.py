@@ -13,6 +13,9 @@ st.write("Analyze historical draws, identify patterns, generate tickets, and see
 
 # --- Helper Functions ---
 
+def to_py_ticket(ticket):
+    return tuple(sorted(int(x) for x in ticket))
+
 def extract_numbers_and_bonus(df):
     required_main_cols = [
         "NUMBER DRAWN 1", "NUMBER DRAWN 2", "NUMBER DRAWN 3",
@@ -68,15 +71,32 @@ def compute_pair_frequencies(numbers_df, limit=150):
         pair_counts.update(pairs)
     return pair_counts
 
-def count_duplicate_full_draws(numbers_df):
-    """
-    Counts how many times each unique full draw (6 numbers) appears.
-    Returns a dict mapping draw tuples to counts (only those with count > 1).
-    """
-    draws_as_tuples = numbers_df.apply(lambda row: tuple(sorted(row)), axis=1)
-    counter = Counter(draws_as_tuples)
-    duplicates = {draw: count for draw, count in counter.items() if count > 1}
-    return duplicates
+def compute_number_gaps(numbers_df, dates=None):
+    last_seen = {num: -1 for num in range(1, 50)}
+    gaps = {num: None for num in range(1, 50)}
+
+    if dates is not None:
+        numbers_df = numbers_df.iloc[dates.argsort()].reset_index(drop=True)
+    else:
+        numbers_df = numbers_df.reset_index(drop=True)
+
+    for idx, row in numbers_df.iterrows():
+        for n in row.values:
+            last_seen[n] = idx
+
+    total_draws = len(numbers_df)
+    for num in range(1, 50):
+        gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
+    return gaps
+
+# New helper function for most common number per draw position
+def most_common_per_draw_position(numbers_df):
+    most_common_dict = {}
+    for col in numbers_df.columns:
+        counts = Counter(numbers_df[col])
+        most_common_num, freq = counts.most_common(1)[0]
+        most_common_dict[col] = (int(most_common_num), freq)
+    return most_common_dict
 
 # --- App Main ---
 
@@ -114,6 +134,7 @@ if uploaded_file:
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
+        gaps = compute_number_gaps(numbers_df, dates)
 
         # Hot & Cold
         st.subheader("Hot Numbers:")
@@ -121,6 +142,12 @@ if uploaded_file:
 
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
+
+        # Most Common Numbers Per Draw Position
+        position_most_common = most_common_per_draw_position(numbers_df)
+        st.subheader("Most Common Numbers by Draw Position:")
+        for position, (num, freq) in position_most_common.items():
+            st.write(f"{position}: {num} (appeared {freq} times)")
 
         # Frequency Chart
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
@@ -130,7 +157,7 @@ if uploaded_file:
         st.plotly_chart(fig, use_container_width=True)
 
         # Pair Frequency
-        st.subheader("Number Pair Frequency (last 150 draws)")
+        st.subheader("Number Pair Frequency (last 500 draws)")
         pair_counts = compute_pair_frequencies(numbers_df)
         pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"])\
             .sort_values(by="Count", ascending=False).head(20)
@@ -140,22 +167,19 @@ if uploaded_file:
         fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
-        # Duplicate Full Draws
-        duplicates = count_duplicate_full_draws(numbers_df)
-
-        st.subheader("Repeated Full Draws (exact same 6 numbers):")
-        if duplicates:
-            for draw, count in duplicates.items():
-                st.write(f"Draw {list(draw)} appeared {count} times")
-        else:
-            st.info("No repeated full draws found — all draws are unique.")
+        # Gap Analysis (optional, remove if you want)
+        st.subheader("Number Gap Analysis")
+        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())})\
+            .sort_values(by="Gap", ascending=False)
+        threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
+        st.dataframe(gaps_df[gaps_df["Gap"] >= threshold])
 
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
 
         strategy = st.selectbox(
             "Strategy for ticket generation",
-            ["Pure Random", "Bias: Hot", "Bias: Cold", "Mixed"]
+            ["Pure Random", "Bias: Hot", "Bias: Cold", "Bias: Overdue", "Mixed"]
         )
         num_tickets = st.slider("How many tickets do you want to generate?", 1, 10, 5)
 
@@ -170,6 +194,10 @@ if uploaded_file:
                 pool = hot + random.sample([n for n in range(1, 50) if n not in hot], 43)
             elif strategy == "Bias: Cold":
                 pool = cold + random.sample([n for n in range(1, 50) if n not in cold], 43)
+            elif strategy == "Bias: Overdue":
+                sorted_by_gap = sorted(gaps.items(), key=lambda x: x[1], reverse=True)
+                top_gap = [n for n, g in sorted_by_gap[:10]]
+                pool = top_gap + random.sample([n for n in range(1, 50) if n not in top_gap], 39)
             elif strategy == "Mixed":
                 pool = hot[:3] + cold[:2]
                 pool += random.sample([n for n in range(1, 50) if n not in pool], 49 - len(pool))
@@ -219,7 +247,6 @@ if uploaded_file:
             swap_count = random.randint(1, 2)
             for _ in range(swap_count):
                 idx_to_swap = random.randint(0, 5)
-                # Only swap if the number is NOT in must_include
                 if ticket[idx_to_swap] in must_include:
                     continue
                 available_nums = [n for n in range(1, 50) if n not in ticket]
@@ -228,7 +255,7 @@ if uploaded_file:
                 new_num = random.choice(available_nums)
                 ticket[idx_to_swap] = new_num
 
-            return sorted(ticket)
+            return sorted(int(n) for n in ticket)
 
         st.write("Generated ML Tickets:")
         for i in range(num_ml_tickets):
