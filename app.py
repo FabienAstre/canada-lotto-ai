@@ -23,34 +23,27 @@ def extract_numbers_and_bonus(df):
     ]
     bonus_col = "BONUS NUMBER"
 
-    # Validate main columns
     if not all(col in df.columns for col in required_main_cols):
         return None, None, None
 
-    # Extract and validate main numbers
     main_numbers_df = df[required_main_cols].apply(pd.to_numeric, errors='coerce').dropna()
     if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
         return None, None, None
 
-    # Extract and validate bonus number
     bonus_series = None
     if bonus_col in df.columns:
         bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
         if not bonus_series.between(1, 49).all():
             bonus_series = None
 
-    # Identify and clean the date column
     date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
     dates = None
     if date_col:
         import re
-
         def clean_date_str(date_str):
             if pd.isna(date_str):
                 return date_str
-            # Remove ordinal suffixes like 6th, 21st, 31th, etc.
             return re.sub(r'(\d{1,2})(st|nd|rd|th)', r'\1', str(date_str))
-
         df[date_col] = df[date_col].apply(clean_date_str)
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         dates = df[date_col]
@@ -61,63 +54,7 @@ def extract_numbers_and_bonus(df):
 def compute_frequencies(numbers_df):
     all_numbers = numbers_df.values.flatten()
     return Counter(all_numbers)
-# After computing position_most_common ...
 
-# Position-based prediction ticket
-def generate_position_based_ticket(position_most_common, must_include=[]):
-    ticket = []
-    for pos in sorted(position_most_common.keys()):
-        num = position_most_common[pos][0]
-        ticket.append(num)
-    ticket = list(set(ticket))  # remove duplicates if any
-
-    # Add must_include numbers if not already in ticket
-    for n in must_include:
-        if n not in ticket:
-            ticket.append(n)
-
-    # If ticket < 6, fill with random numbers not in ticket
-    while len(ticket) < 6:
-        candidate = random.randint(1, 49)
-        if candidate not in ticket:
-            ticket.append(candidate)
-
-    # If ticket > 6 (because of must_include), randomly drop extras except must_include
-    while len(ticket) > 6:
-        removable = [n for n in ticket if n not in must_include]
-        if not removable:
-            break
-        to_remove = random.choice(removable)
-        ticket.remove(to_remove)
-
-    # Swap 1-2 numbers randomly (excluding must_include) for variation
-    swap_count = random.randint(1, 2)
-    for _ in range(swap_count):
-        idx = random.randint(0, 5)
-        if ticket[idx] in must_include:
-            continue
-        available = [n for n in range(1, 50) if n not in ticket]
-        if not available:
-            break
-        ticket[idx] = random.choice(available)
-
-    return sorted(ticket)
-
-# --- Below your ML prediction section ---
-
-# Add UI for must_include numbers for position-based model
-must_include_pos = st.multiselect(
-    "Select numbers to always include in Position-Based Prediction",
-    options=list(range(1, 50)),
-    default=[]
-)
-
-num_pos_pred_tickets = st.slider("How many Position-Based predicted tickets to generate?", 1, 10, 3)
-
-st.subheader("Position-Based Predicted Tickets:")
-for i in range(num_pos_pred_tickets):
-    pos_ticket = generate_position_based_ticket(position_most_common, must_include_pos)
-    st.write(f"Position-Based Ticket {i+1}: {pos_ticket}")
 @st.cache_data
 def compute_pair_frequencies(numbers_df, limit=500):
     pair_counts = Counter()
@@ -180,39 +117,38 @@ if uploaded_file:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             df = df.sort_values(by=date_col, ascending=True)  # oldest first
 
-        # Display all data uploaded (all rows)
+        # Show all data uploaded
         st.subheader(f"Uploaded Data (All {len(df)} draws):")
         st.dataframe(df.reset_index(drop=True))
 
-        # Allow user to select how many recent draws to use for analysis
+        # Slider for how many recent draws to analyze
         max_draws = len(df)
         st.subheader("Select Number of Recent Draws for Analysis")
         draws_to_use = st.slider("Number of draws", min_value=50, max_value=max_draws, value=min(300, max_draws), step=10)
 
-        # Filter data to last `draws_to_use` draws (most recent)
+        # Use last draws_to_use rows for analysis
         df_used = df.tail(draws_to_use).reset_index(drop=True)
 
-        # Extract numbers and bonus from filtered data
+        # Extract numbers & bonus
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df_used)
         if numbers_df is None:
             st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
             st.stop()
 
-        # Compute frequencies and stats based on filtered data
+        # Frequencies and stats
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
         gaps = compute_number_gaps(numbers_df, dates)
+        position_most_common = most_common_per_draw_position(numbers_df)
 
-        # Hot & Cold numbers display
+        # Display Hot & Cold
         st.subheader("Hot Numbers:")
         st.write(", ".join(map(str, hot)))
-
         st.subheader("Cold Numbers:")
         st.write(", ".join(map(str, cold)))
 
-        # Most Common Numbers Per Draw Position
-        position_most_common = most_common_per_draw_position(numbers_df)
+        # Most Common Numbers by Draw Position
         st.subheader("Most Common Numbers by Draw Position:")
         for position, (num, freq) in position_most_common.items():
             st.write(f"{position}: {num} (appeared {freq} times)")
@@ -224,7 +160,7 @@ if uploaded_file:
                      title=f"Number Frequency (last {draws_to_use} draws)", color_continuous_scale="Blues")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Pair Frequency (top 20 pairs)
+        # Pair Frequency Chart
         st.subheader(f"Number Pair Frequency (last {draws_to_use} draws)")
         pair_counts = compute_pair_frequencies(numbers_df, limit=draws_to_use)
         pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"])\
@@ -235,7 +171,7 @@ if uploaded_file:
         fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
-        # Triplet Frequency (top 20 triplets)
+        # Triplet Frequency Chart
         st.subheader(f"Number Triplet Frequency (last {draws_to_use} draws)")
         triplet_counts = compute_triplet_frequencies(numbers_df, limit=draws_to_use)
         triplets_df = pd.DataFrame(triplet_counts.items(), columns=["Triplet", "Count"])\
@@ -255,7 +191,6 @@ if uploaded_file:
 
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
-
         strategy = st.selectbox(
             "Strategy for ticket generation",
             ["Pure Random", "Bias: Hot", "Bias: Cold", "Bias: Overdue", "Mixed"]
@@ -289,7 +224,7 @@ if uploaded_file:
         for idx, ticket in enumerate(generated_tickets, 1):
             st.write(f"Ticket {idx}: {ticket}")
 
-        # 🧠 ML-based Prediction (Experimental)
+        # ML-based Prediction (existing)
         st.subheader("🧠 ML-Based Prediction (Experimental)")
 
         must_include = st.multiselect(
@@ -319,7 +254,6 @@ if uploaded_file:
                 if remaining_needed > 0:
                     ticket += random.sample(remaining_pool, remaining_needed)
 
-            # Add randomness: swap 1-2 numbers randomly (except must_include)
             swap_count = random.randint(1, 2)
             for _ in range(swap_count):
                 idx_to_swap = random.randint(0, 5)
@@ -338,7 +272,64 @@ if uploaded_file:
             ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
             st.write(f"ML Ticket {i+1}: {ml_ticket}")
 
+        # Position-Based Prediction Model (new)
+        st.subheader("🎯 Position-Based Prediction Tickets")
+
+        must_include_pos = st.multiselect(
+            "Select numbers to always include in Position-Based Prediction",
+            options=list(range(1, 50)),
+            default=[]
+        )
+
+        num_pos_pred_tickets = st.slider("How many Position-Based predicted tickets to generate?", 1, 10, 3)
+
+        def generate_position_based_ticket(position_most_common, must_include=[]):
+            ticket = []
+            # pick most common number in each position (column)
+            for pos in sorted(position_most_common.keys()):
+                num = position_most_common[pos][0]
+                ticket.append(num)
+            ticket = list(set(ticket))  # unique numbers only
+
+            # Add must_include numbers if missing
+            for n in must_include:
+                if n not in ticket:
+                    ticket.append(n)
+
+            # Fill to 6 numbers randomly if needed
+            while len(ticket) < 6:
+                candidate = random.randint(1, 49)
+                if candidate not in ticket:
+                    ticket.append(candidate)
+
+            # If more than 6 (due to must_include), randomly remove extras except must_include
+            while len(ticket) > 6:
+                removable = [n for n in ticket if n not in must_include]
+                if not removable:
+                    break
+                to_remove = random.choice(removable)
+                ticket.remove(to_remove)
+
+            # Random swaps for variation (excluding must_include)
+            swap_count = random.randint(1, 2)
+            for _ in range(swap_count):
+                idx = random.randint(0, 5)
+                if ticket[idx] in must_include:
+                    continue
+                available = [n for n in range(1, 50) if n not in ticket]
+                if not available:
+                    break
+                ticket[idx] = random.choice(available)
+
+            return sorted(ticket)
+
+        st.write("Position-Based Predicted Tickets:")
+        for i in range(num_pos_pred_tickets):
+            pos_ticket = generate_position_based_ticket(position_most_common, must_include_pos)
+            st.write(f"Position-Based Ticket {i+1}: {pos_ticket}")
+
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
+
 else:
     st.info("Please upload a CSV file with Lotto 6/49 draw results.")
