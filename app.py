@@ -189,43 +189,6 @@ if uploaded_file:
         threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
         st.dataframe(gaps_df[gaps_df["Gap"] >= threshold])
 
-        # --- User Played Numbers Section ---
-st.subheader("📊 Enter Your Played Numbers")
-num_played_tickets = st.number_input("How many tickets have you played?", min_value=1, max_value=10, value=1, step=1)
-
-user_played_tickets = []
-for i in range(num_played_tickets):
-    ticket_input = st.text_input(f"Ticket {i+1} (enter 6 numbers separated by commas)", "")
-    if ticket_input:
-        try:
-            ticket_numbers = sorted([int(x.strip()) for x in ticket_input.split(",") if 1 <= int(x.strip()) <= 49])
-            if len(ticket_numbers) != 6:
-                st.warning(f"Ticket {i+1} does not have exactly 6 valid numbers.")
-            else:
-                user_played_tickets.append(ticket_numbers)
-        except ValueError:
-            st.warning(f"Ticket {i+1} contains invalid numbers.")
-
-# --- Update Frequency with User Numbers ---
-if user_played_tickets:
-    st.subheader("Frequency Including Your Played Numbers")
-    # Flatten previous numbers and user numbers
-    combined_numbers = list(numbers_df.values.flatten()) + [n for ticket in user_played_tickets for n in ticket]
-    combined_counter = Counter(combined_numbers)
-    
-    # Hot & Cold including user numbers
-    hot_user = [num for num, _ in combined_counter.most_common(6)]
-    cold_user = [num for num, _ in combined_counter.most_common()[:-7:-1]]
-    
-    st.write("Hot Numbers (Including Your Played Numbers):", hot_user)
-    st.write("Cold Numbers (Including Your Played Numbers):", cold_user)
-
-    # Optional: Highlight your numbers in generated tickets
-    st.subheader("🎰 Highlighting Your Numbers in Generated Tickets")
-    for idx, ticket in enumerate(generated_tickets, 1):
-        highlighted = ["**" + str(n) + "**" if any(n in t for t in user_played_tickets) else str(n) for n in ticket]
-        st.write(f"Ticket {idx}: {highlighted}")
-
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
         strategy = st.selectbox(
