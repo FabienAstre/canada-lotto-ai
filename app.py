@@ -236,6 +236,47 @@ if uploaded_file:
             pos_ticket = generate_position_based_ticket(pos_common, must_include_pos)
             st.write(f"Position-based Ticket {i+1}: {pos_ticket}")
 
+        # --- Ticket Generator ---
+st.subheader("🎟️ Generate Tickets")
+num_tickets = st.slider("Number of tickets to generate", min_value=1, max_value=10, value=6)
+
+strategy = st.selectbox("Ticket Generation Strategy", ["Mixed (Recommended)", "Pure Random","Hot Bias","Cold Bias","Overdue Bias","ML Prediction","Position-Based"])
+
+tickets = []
+
+# Prepare pools
+hot = [int(n) for n,_ in counter.most_common(6)]
+cold = [int(n) for n,_ in counter.most_common()[:-7:-1]]
+overdue_numbers = [int(n) for n,_ in sorted(gaps.items(), key=lambda x:x[1], reverse=True)[:10]]
+predicted_numbers = [int(n) for n,_ in counter.most_common(12)]
+pos_numbers = [int(v[0]) for v in pos_common.values()]
+
+for _ in range(num_tickets):
+    if strategy == "Pure Random":
+        pool = list(range(1,50))
+        tickets.append(generate_ticket(pool))
+    elif strategy == "Hot Bias":
+        pool = hot + [n for n in range(1,50) if n not in hot]
+        tickets.append(generate_ticket(pool))
+    elif strategy == "Cold Bias":
+        pool = cold + [n for n in range(1,50) if n not in cold]
+        tickets.append(generate_ticket(pool))
+    elif strategy == "Overdue Bias":
+        pool = overdue_numbers + [n for n in range(1,50) if n not in overdue_numbers]
+        tickets.append(generate_ticket(pool))
+    elif strategy == "ML Prediction":
+        tickets.append(generate_ml_ticket(must_include=[], predicted_numbers=predicted_numbers))
+    elif strategy == "Position-Based":
+        tickets.append(generate_position_based_ticket(pos_common, must_include=[]))
+    elif strategy == "Mixed (Recommended)":
+        mixed_pool = hot[:3] + cold[:2] + [n for n in range(1,50) if n not in hot[:3]+cold[:2]]
+        tickets.append(generate_ticket(mixed_pool))
+
+# Display tickets
+st.subheader(f"🎯 Generated {num_tickets} Tickets")
+for idx, t in enumerate(tickets, 1):
+    st.write(f"Ticket {idx}: {t}")
+
         # --- Check if Draw Combination Exists ---
         st.subheader("🔍 Check if Draw Combination Already Appeared")
         user_draw = st.text_input("Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):", key="check_draw")
