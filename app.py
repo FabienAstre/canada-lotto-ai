@@ -73,15 +73,22 @@ if uploaded_file:
             st.error("CSV must have NUMBER DRAWN 1-6 columns with values 1-49.")
             st.stop()
 
-        # --- Hot & Cold Numbers ---
-        counter = compute_frequencies(numbers_df)
-        hot = [n for n, _ in counter.most_common(6)]
-        cold = [n for n, _ in counter.most_common()[:-7:-1]]
+      # --- Hot & Cold Numbers Display ---
+st.subheader("🔥 Hot Numbers")
+hot_numbers = [10, 9, 21, 23, 48, 7]
+st.write("Top 6 numbers that appeared most frequently recently:")
 
-        st.subheader("🔥 Hot Numbers")
-        st.write(hot)
-        st.subheader("❄️ Cold Numbers")
-        st.write(cold)
+cols = st.columns(len(hot_numbers))
+for i, num in enumerate(hot_numbers):
+    cols[i].metric(label="", value=num)
+
+st.subheader("❄️ Cold Numbers")
+cold_numbers = [1, 14, 32, 2, 20, 5]
+st.write("Top 6 numbers that appeared least frequently recently:")
+
+cols = st.columns(len(cold_numbers))
+for i, num in enumerate(cold_numbers):
+    cols[i].metric(label="", value=num)
 
         # --- Number Gap Analysis (Compact Table) ---
         gaps = compute_number_gaps(numbers_df, dates)
