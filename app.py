@@ -147,11 +147,11 @@ if uploaded_file:
 
         # --- Hot & Cold Numbers ---
         st.subheader("🔥 Hot & ❄️ Cold Numbers")
-        counter = compute_frequencies(numbers_df)
-        hot = [n for n,_ in counter.most_common(6)]
-        cold = [n for n,_ in counter.most_common()[:-7:-1]]
-        st.write(f"Hot Numbers: {hot}")
-        st.write(f"Cold Numbers: {cold}")
+       counter = compute_frequencies(numbers_df)
+hot = [int(n) for n,_ in counter.most_common(6)]
+cold = [int(n) for n,_ in counter.most_common()[:-7:-1]]
+st.write(f"Hot Numbers: {hot}")
+st.write(f"Cold Numbers: {cold}")
 
         # --- Most Common per Position ---
         st.subheader("Most Common Numbers by Draw Position")
