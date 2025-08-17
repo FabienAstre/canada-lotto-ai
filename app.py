@@ -6,17 +6,27 @@ from itertools import combinations
 import random
 import plotly.express as px
 
+# ======================
 # Streamlit config
+# ======================
 st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 st.title("🎲 Canada Lotto 6/49 Analyzer")
 st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
-# --- Helper Functions ---
+# ======================
+# Helper Functions
+# ======================
 
 def to_py_ticket(ticket):
     return tuple(sorted(int(x) for x in ticket))
 
 def extract_numbers_and_bonus(df):
+    """
+    Returns:
+      - main_numbers_df (int DataFrame with 6 columns)
+      - bonus_series (int Series or None)
+      - dates (DatetimeIndex-like Series or None)
+    """
     required_main_cols = [
         "NUMBER DRAWN 1", "NUMBER DRAWN 2", "NUMBER DRAWN 3",
         "NUMBER DRAWN 4", "NUMBER DRAWN 5", "NUMBER DRAWN 6",
@@ -51,12 +61,12 @@ def extract_numbers_and_bonus(df):
     return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
 
 @st.cache_data
-def compute_frequencies(numbers_df):
+def compute_frequencies(numbers_df: pd.DataFrame):
     all_numbers = numbers_df.values.flatten()
     return Counter(all_numbers)
 
 @st.cache_data
-def compute_pair_frequencies(numbers_df, limit=500):
+def compute_pair_frequencies(numbers_df: pd.DataFrame, limit=500):
     pair_counts = Counter()
     df_subset = numbers_df.tail(limit)
     for _, row in df_subset.iterrows():
@@ -65,7 +75,7 @@ def compute_pair_frequencies(numbers_df, limit=500):
     return pair_counts
 
 @st.cache_data
-def compute_triplet_frequencies(numbers_df, limit=500):
+def compute_triplet_frequencies(numbers_df: pd.DataFrame, limit=500):
     triplet_counts = Counter()
     df_subset = numbers_df.tail(limit)
     for _, row in df_subset.iterrows():
@@ -73,12 +83,14 @@ def compute_triplet_frequencies(numbers_df, limit=500):
         triplet_counts.update(triplets)
     return triplet_counts
 
-def compute_number_gaps(numbers_df, dates=None):
+def compute_number_gaps(numbers_df: pd.DataFrame, dates=None):
     last_seen = {num: -1 for num in range(1, 50)}
     gaps = {num: None for num in range(1, 50)}
 
     if dates is not None:
-        numbers_df = numbers_df.iloc[dates.argsort()].reset_index(drop=True)
+        # Sort by date ascending to compute correct gap positions
+        order = dates.argsort()
+        numbers_df = numbers_df.iloc[order].reset_index(drop=True)
     else:
         numbers_df = numbers_df.reset_index(drop=True)
 
@@ -91,7 +103,7 @@ def compute_number_gaps(numbers_df, dates=None):
         gaps[num] = total_draws - 1 - last_seen[num] if last_seen[num] != -1 else total_draws
     return gaps
 
-def most_common_per_draw_position(numbers_df):
+def most_common_per_draw_position(numbers_df: pd.DataFrame):
     most_common_dict = {}
     for col in numbers_df.columns:
         counts = Counter(numbers_df[col])
@@ -99,7 +111,9 @@ def most_common_per_draw_position(numbers_df):
         most_common_dict[col] = (int(most_common_num), freq)
     return most_common_dict
 
-# --- Main App ---
+# ======================
+# Main App
+# ======================
 
 uploaded_file = st.file_uploader(
     "Upload a Lotto 6/49 CSV file",
@@ -111,31 +125,42 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # Find and parse date column
+        # Sort by date if present
         date_col = next((col for col in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if col in df.columns), None)
         if date_col:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             df = df.sort_values(by=date_col, ascending=True)  # oldest first
 
-        # Show all data uploaded
+        # Show all uploaded data
         st.subheader(f"Uploaded Data (All {len(df)} draws):")
-        st.dataframe(df.reset_index(drop=True))
+        st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
-        # Slider for how many recent draws to analyze
+        # Extract numbers/bonus/dates for FULL dataset (used by the checker)
+        numbers_all_df, bonus_all_series, dates_all = extract_numbers_and_bonus(df)
+        if numbers_all_df is None:
+            st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
+            st.stop()
+
+        # Slider for how many recent draws to analyze (for charts/stats)
         max_draws = len(df)
         st.subheader("Select Number of Recent Draws for Analysis")
-        draws_to_use = st.slider("Number of draws", min_value=50, max_value=max_draws, value=min(300, max_draws), step=10)
+        draws_to_use = st.slider(
+            "Number of draws",
+            min_value=min(50, max_draws) if max_draws > 0 else 0,
+            max_value=max_draws,
+            value=min(300, max_draws),
+            step=10,
+            help="Controls the window size for frequency/pair/triplet analyses below."
+        )
 
         # Use last draws_to_use rows for analysis
         df_used = df.tail(draws_to_use).reset_index(drop=True)
-
-        # Extract numbers & bonus
         numbers_df, bonus_series, dates = extract_numbers_and_bonus(df_used)
         if numbers_df is None:
             st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6' with values 1-49.")
             st.stop()
 
-        # Frequencies and stats
+        # Frequencies and stats (on the selected window)
         counter = compute_frequencies(numbers_df)
         hot = [num for num, _ in counter.most_common(6)]
         cold = [num for num, _ in counter.most_common()[:-7:-1]]
@@ -143,51 +168,83 @@ if uploaded_file:
         position_most_common = most_common_per_draw_position(numbers_df)
 
         # Display Hot & Cold
-        st.subheader("Hot Numbers:")
-        st.write(", ".join(map(str, hot)))
-        st.subheader("Cold Numbers:")
-        st.write(", ".join(map(str, cold)))
+        st.subheader("Hot & Cold Numbers (Selected Window)")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**🔥 Hot Numbers:**")
+            st.write(", ".join(map(str, hot)) if hot else "—")
+        with c2:
+            st.markdown("**❄️ Cold Numbers:**")
+            st.write(", ".join(map(str, cold)) if cold else "—")
 
         # Most Common Numbers by Draw Position
-        st.subheader("Most Common Numbers by Draw Position:")
+        st.subheader("Most Common Numbers by Draw Position (Selected Window)")
         for position, (num, freq) in position_most_common.items():
             st.write(f"{position}: {num} (appeared {freq} times)")
 
         # Frequency Chart
         freq_df = pd.DataFrame({"Number": list(range(1, 50))})
         freq_df["Frequency"] = freq_df["Number"].apply(lambda x: counter.get(x, 0))
-        fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency",
-                     title=f"Number Frequency (last {draws_to_use} draws)", color_continuous_scale="Blues")
+        fig = px.bar(
+            freq_df,
+            x="Number",
+            y="Frequency",
+            color="Frequency",
+            title=f"Number Frequency (last {draws_to_use} draws)",
+            color_continuous_scale="Blues"
+        )
         st.plotly_chart(fig, use_container_width=True)
 
         # Pair Frequency Chart
         st.subheader(f"Number Pair Frequency (last {draws_to_use} draws)")
         pair_counts = compute_pair_frequencies(numbers_df, limit=draws_to_use)
-        pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"])\
-            .sort_values(by="Count", ascending=False).head(20)
+        pairs_df = (
+            pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"])
+            .sort_values(by="Count", ascending=False)
+            .head(20)
+            .reset_index(drop=True)
+        )
         pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-        fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count",
-                           color_continuous_scale="Viridis")
+        fig_pairs = px.bar(
+            pairs_df,
+            y="Pair",
+            x="Count",
+            orientation='h',
+            color="Count",
+            color_continuous_scale="Viridis",
+            title="Top 20 Pairs"
+        )
         fig_pairs.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_pairs, use_container_width=True)
 
         # Triplet Frequency Chart
         st.subheader(f"Number Triplet Frequency (last {draws_to_use} draws)")
         triplet_counts = compute_triplet_frequencies(numbers_df, limit=draws_to_use)
-        triplets_df = pd.DataFrame(triplet_counts.items(), columns=["Triplet", "Count"])\
-            .sort_values(by="Count", ascending=False).head(20)
+        triplets_df = (
+            pd.DataFrame(triplet_counts.items(), columns=["Triplet", "Count"])
+            .sort_values(by="Count", ascending=False)
+            .head(20)
+            .reset_index(drop=True)
+        )
         triplets_df["Triplet"] = triplets_df["Triplet"].apply(lambda x: f"{x[0]} & {x[1]} & {x[2]}")
-        fig_triplets = px.bar(triplets_df, y="Triplet", x="Count", orientation='h', color="Count",
-                             color_continuous_scale="Cividis")
+        fig_triplets = px.bar(
+            triplets_df,
+            y="Triplet",
+            x="Count",
+            orientation='h',
+            color="Count",
+            color_continuous_scale="Cividis",
+            title="Top 20 Triplets"
+        )
         fig_triplets.update_layout(yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_triplets, use_container_width=True)
 
         # Gap Analysis
-        st.subheader("Number Gap Analysis")
-        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())})\
+        st.subheader("Number Gap Analysis (Selected Window)")
+        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}) \
             .sort_values(by="Gap", ascending=False)
         threshold = st.slider("Gap threshold for overdue numbers (draws)", min_value=0, max_value=100, value=27)
-        st.dataframe(gaps_df[gaps_df["Gap"] >= threshold])
+        st.dataframe(gaps_df[gaps_df["Gap"] >= threshold], use_container_width=True)
 
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
@@ -224,7 +281,7 @@ if uploaded_file:
         for idx, ticket in enumerate(generated_tickets, 1):
             st.write(f"Ticket {idx}: {ticket}")
 
-        # ML-based Prediction (existing)
+        # ML-based Prediction (simple heuristic)
         st.subheader("🧠 ML-Based Prediction (Experimental)")
 
         must_include = st.multiselect(
@@ -236,7 +293,6 @@ if uploaded_file:
         num_ml_tickets = st.slider("How many ML predicted tickets to generate?", 1, 10, 3)
 
         predicted_numbers = [int(num) for num, _ in counter.most_common(12)]
-
         st.write("Base Predicted Numbers (top 12 most common):")
         st.write(predicted_numbers)
 
@@ -272,7 +328,7 @@ if uploaded_file:
             ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
             st.write(f"ML Ticket {i+1}: {ml_ticket}")
 
-        # Position-Based Prediction Model (new)
+        # Position-Based Prediction Model
         st.subheader("🎯 Position-Based Prediction Tickets")
 
         must_include_pos = st.multiselect(
@@ -289,20 +345,20 @@ if uploaded_file:
             for pos in sorted(position_most_common.keys()):
                 num = position_most_common[pos][0]
                 ticket.append(num)
-            ticket = list(set(ticket))  # unique numbers only
+            ticket = list(set(ticket))  # enforce uniqueness
 
-            # Add must_include numbers if missing
+            # Add must_include numbers
             for n in must_include:
                 if n not in ticket:
                     ticket.append(n)
 
-            # Fill to 6 numbers randomly if needed
+            # Fill to 6 numbers
             while len(ticket) < 6:
                 candidate = random.randint(1, 49)
                 if candidate not in ticket:
                     ticket.append(candidate)
 
-            # If more than 6 (due to must_include), randomly remove extras except must_include
+            # Reduce if >6 (avoid removing must_include)
             while len(ticket) > 6:
                 removable = [n for n in ticket if n not in must_include]
                 if not removable:
@@ -328,60 +384,49 @@ if uploaded_file:
             pos_ticket = generate_position_based_ticket(position_most_common, must_include_pos)
             st.write(f"Position-Based Ticket {i+1}: {pos_ticket}")
 
+        # ======================
+        # 🔍 Check if a 6-Number Combination Has Already Appeared (checks FULL dataset)
+        # ======================
+        st.subheader("🔍 Check if a Draw Combination Has Already Appeared (All History)")
+
+        user_draw = st.text_input(
+            "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):",
+            key="check_draw_combo"
+        )
+
+        if user_draw.strip():
+            try:
+                numbers_entered = [int(x.strip()) for x in user_draw.split(",")]
+                if len(numbers_entered) != 6:
+                    raise ValueError("Please enter exactly 6 numbers.")
+                if not all(1 <= n <= 49 for n in numbers_entered):
+                    raise ValueError("All numbers must be between 1 and 49.")
+
+                user_numbers = tuple(sorted(numbers_entered))
+
+                # All historical draws as sorted tuples
+                past_draws_all = [tuple(sorted(row)) for row in numbers_all_df.values.tolist()]
+
+                # Find all matches (with dates if available)
+                matches_idx = [i for i, row in enumerate(numbers_all_df.values.tolist()) if tuple(sorted(row)) == user_numbers]
+
+                if matches_idx:
+                    st.success(f"✅ This exact combination appeared {len(matches_idx)} time(s) in history!")
+                    if dates_all is not None:
+                        st.write("Occurrences:")
+                        for i in matches_idx:
+                            st.write(f"- {pd.to_datetime(dates_all.iloc[i]).date()}: {list(numbers_all_df.iloc[i].values)}")
+                    else:
+                        st.write("Occurrences (row indexes in file):")
+                        st.write([i + 1 for i in matches_idx])
+                else:
+                    st.error("❌ This combination has never appeared in history.")
+
+            except Exception as e:
+                st.error(f"⚠️ Invalid input: {e}")
+
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
 
 else:
     st.info("Please upload a CSV file with Lotto 6/49 draw results.")
-
-# ======================
-        # 🔍 Check if a Draw Exists
-        # ======================
-        st.subheader("🔍 Check if a Draw Exists in History")
-
-        user_draw = st.text_input(
-            "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):"
-        )
-
-        if user_draw:
-            try:
-                user_numbers = tuple(sorted([int(x.strip()) for x in user_draw.split(",")]))
-                past_draws = [tuple(sorted(row)) for row in numbers_df.values.tolist()]
-                if user_numbers in past_draws:
-                    draw_index = past_draws.index(user_numbers)
-                    st.success(f"✅ This draw exists! Found at draw #{draw_index+1}")
-                else:
-                    st.error("❌ This draw has never appeared.")
-            except Exception as e:
-                st.error(f"Invalid input: {e}")
-# ======================
-# 🔍 Check if a Draw Combination Already Came Out
-# ======================
-st.subheader("🔍 Check if a Draw Combination Has Already Appeared")
-
-user_draw = st.text_input(
-    "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):"
-)
-
-if user_draw:
-    try:
-        # Convert input to a sorted tuple
-        user_numbers = tuple(sorted([int(x.strip()) for x in user_draw.split(",")]))
-
-        # All past draws as sorted tuples
-        past_draws = [tuple(sorted(row)) for row in numbers_df.values.tolist()]
-
-        # Count occurrences
-        occurrences = past_draws.count(user_numbers)
-
-        if occurrences > 0:
-            st.success(f"✅ This exact draw has appeared {occurrences} time(s) in history!")
-        else:
-            st.error("❌ This draw has never appeared in history.")
-
-    except Exception as e:
-        st.error("⚠️ Invalid input: please enter 6 numbers separated by commas.")
-                prev_idx = earlier_draws.index(draw_values)
-                st.warning(f"⚠️ This draw already appeared before at draw #{prev_idx+1}.")
-            else:
-                st.success("✅ This draw is unique up to this point in history.")
