@@ -384,49 +384,48 @@ if uploaded_file:
             pos_ticket = generate_position_based_ticket(position_most_common, must_include_pos)
             st.write(f"Position-Based Ticket {i+1}: {pos_ticket}")
 
-        # ======================
-        # 🔍 Check if a 6-Number Combination Has Already Appeared (checks FULL dataset)
-        # ======================
-        st.subheader("🔍 Check if a Draw Combination Has Already Appeared (All History)")
+      # ======================
+# 🔍 Check if a 6-Number Combination Has Already Appeared (checks FULL dataset)
+# ======================
+st.subheader("🔍 Check if a Draw Combination Has Already Appeared (All History)")
 
-        user_draw = st.text_input(
-            "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):",
-            key="check_draw_combo"
-        )
+user_draw = st.text_input(
+    "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):",
+    key="check_draw_combo"
+)
 
-        if user_draw.strip():
-            try:
-                numbers_entered = [int(x.strip()) for x in user_draw.split(",")]
-                if len(numbers_entered) != 6:
-                    raise ValueError("Please enter exactly 6 numbers.")
-                if not all(1 <= n <= 49 for n in numbers_entered):
-                    raise ValueError("All numbers must be between 1 and 49.")
+if user_draw.strip():
+    try:
+        # Parse input and validate
+        numbers_entered = [int(x.strip()) for x in user_draw.split(",")]
+        if len(numbers_entered) != 6:
+            raise ValueError("Please enter exactly 6 numbers.")
+        if not all(1 <= n <= 49 for n in numbers_entered):
+            raise ValueError("All numbers must be between 1 and 49.")
 
-                user_numbers = tuple(sorted(numbers_entered))
+        user_numbers = tuple(sorted(numbers_entered))
 
-                # All historical draws as sorted tuples
-                past_draws_all = [tuple(sorted(row)) for row in numbers_all_df.values.tolist()]
+        # All historical draws as sorted tuples
+        past_draws_all = [tuple(sorted(row)) for row in numbers_all_df.values.tolist()]
 
-                # Find all matches (with dates if available)
-                matches_idx = [i for i, row in enumerate(numbers_all_df.values.tolist()) if tuple(sorted(row)) == user_numbers]
+        # Find all matches (with dates if available)
+        matches_idx = [
+            i for i, row in enumerate(numbers_all_df.values.tolist())
+            if tuple(sorted(row)) == user_numbers
+        ]
 
-                if matches_idx:
-                    st.success(f"✅ This exact combination appeared {len(matches_idx)} time(s) in history!")
-                    if dates_all is not None:
-                        st.write("Occurrences:")
-                        for i in matches_idx:
-                            st.write(f"- {pd.to_datetime(dates_all.iloc[i]).date()}: {list(numbers_all_df.iloc[i].values)}")
-                    else:
-                        st.write("Occurrences (row indexes in file):")
-                        st.write([i + 1 for i in matches_idx])
-                else:
-                    st.error("❌ This combination has never appeared in history.")
-
-            except Exception as e:
-                st.error(f"⚠️ Invalid input: {e}")
+        if matches_idx:
+            st.success(f"✅ This exact combination appeared {len(matches_idx)} time(s) in history!")
+            if dates_all is not None:
+                st.write("Occurrences:")
+                for i in matches_idx:
+                    clean_numbers = [int(x) for x in numbers_all_df.iloc[i].values]
+                    st.write(f"- {pd.to_datetime(dates_all.iloc[i]).date()}: {clean_numbers}")
+            else:
+                st.write("Occurrences (row indexes in file):")
+                st.write([i + 1 for i in matches_idx])
+        else:
+            st.error("❌ This combination has never appeared in history.")
 
     except Exception as e:
-        st.error(f"❌ Error reading CSV: {e}")
-
-else:
-    st.info("Please upload a CSV file with Lotto 6/49 draw results.")
+        st.error(f"⚠️ Invalid input: {e}")
