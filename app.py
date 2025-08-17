@@ -333,3 +333,46 @@ if uploaded_file:
 
 else:
     st.info("Please upload a CSV file with Lotto 6/49 draw results.")
+
+# ======================
+        # 🔍 Check if a Draw Exists
+        # ======================
+        st.subheader("🔍 Check if a Draw Exists in History")
+
+        user_draw = st.text_input(
+            "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):"
+        )
+
+        if user_draw:
+            try:
+                user_numbers = tuple(sorted([int(x.strip()) for x in user_draw.split(",")]))
+                past_draws = [tuple(sorted(row)) for row in numbers_df.values.tolist()]
+                if user_numbers in past_draws:
+                    draw_index = past_draws.index(user_numbers)
+                    st.success(f"✅ This draw exists! Found at draw #{draw_index+1}")
+                else:
+                    st.error("❌ This draw has never appeared.")
+            except Exception as e:
+                st.error(f"Invalid input: {e}")
+
+        # ======================
+        # 🔍 Check by Draw Number
+        # ======================
+        st.subheader("🔍 Check by Draw Number (Row)")
+
+        draw_num = st.number_input(
+            "Enter draw row number (1 = first in dataset, up to {len(numbers_df)}):",
+            min_value=1, max_value=len(numbers_df), step=1
+        )
+
+        if st.button("Check Draw"):
+            draw_values = tuple(sorted(numbers_df.iloc[draw_num-1].values))
+            st.write(f"Draw #{draw_num}: {draw_values}")
+
+            # Check if it occurred before that index
+            earlier_draws = [tuple(sorted(row)) for row in numbers_df.iloc[:draw_num-1].values.tolist()]
+            if draw_values in earlier_draws:
+                prev_idx = earlier_draws.index(draw_values)
+                st.warning(f"⚠️ This draw already appeared before at draw #{prev_idx+1}.")
+            else:
+                st.success("✅ This draw is unique up to this point in history.")
