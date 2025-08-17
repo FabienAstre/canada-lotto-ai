@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from collections import Counter
 from itertools import combinations
 import random
@@ -69,7 +68,6 @@ def compute_triplet_frequencies(numbers_df, limit=500):
 
 def compute_number_gaps(numbers_df, dates=None):
     last_seen = {n: -1 for n in range(1,50)}
-    gaps = {}
     df = numbers_df.copy()
     if dates is not None:
         df = df.iloc[dates.argsort()].reset_index(drop=True)
@@ -80,15 +78,14 @@ def compute_number_gaps(numbers_df, dates=None):
         for n in row.values:
             last_seen[n] = idx
     total_draws = len(df)
-    for n in range(1,50):
-        gaps[n] = total_draws - 1 - last_seen[n] if last_seen[n] != -1 else total_draws
+    gaps = {n: total_draws - 1 - last_seen[n] if last_seen[n] != -1 else total_draws for n in range(1,50)}
     return gaps
 
 def most_common_per_position(numbers_df):
     result = {}
     for col in numbers_df.columns:
         num, freq = Counter(numbers_df[col]).most_common(1)[0]
-        result[col] = (int(num), freq)
+        result[col] = (num, freq)
     return result
 
 def generate_ticket(pool):
@@ -98,12 +95,7 @@ def generate_ml_ticket(must_include, predicted_numbers):
     ticket = must_include.copy()
     pool = [n for n in predicted_numbers if n not in ticket]
     needed = 6 - len(ticket)
-    if len(pool) >= needed:
-        ticket += random.sample(pool, needed)
-    else:
-        ticket += pool
-        remaining_pool = [n for n in range(1,50) if n not in ticket]
-        ticket += random.sample(remaining_pool, 6-len(ticket))
+    ticket += random.sample(pool, needed) if len(pool) >= needed else pool + random.sample([n for n in range(1,50) if n not in ticket], 6-len(ticket))
     swap_count = random.randint(1,2)
     for _ in range(swap_count):
         idx = random.randint(0,5)
@@ -150,7 +142,6 @@ if uploaded_file:
             st.error("Invalid CSV. Make sure columns NUMBER DRAWN 1-6 exist with numbers 1-49.")
             st.stop()
 
-        # --- Display Data ---
         st.subheader(f"Uploaded Data ({len(df)} draws):")
         st.dataframe(df.reset_index(drop=True))
 
@@ -194,15 +185,15 @@ if uploaded_file:
         st.subheader("🔢 Number Gap Analysis")
         gaps = compute_number_gaps(numbers_df, dates)
         gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
-        min_gap = st.slider("Show numbers with at least this many draws since last appearance:", min_value=0, max_value=int(gaps_df["Gap"].max()), value=int(gaps_df["Gap"].median()))
-        filtered_gaps = gaps_df[gaps_df["Gap"] >= min_gap]
-        st.table(filtered_gaps)
-        fig_gap = px.bar(filtered_gaps, x="Number", y="Gap", color="Gap", color_continuous_scale="Oranges", text="Gap", title=f"Numbers with Gap ≥ {min_gap}")
+        # Show only top 10
+        top_gaps_df = gaps_df.head(10)
+        st.table(top_gaps_df)
+        fig_gap = px.bar(top_gaps_df, x="Number", y="Gap", color="Gap", color_continuous_scale="Oranges", text="Gap", title="Top 10 Number Gaps")
         fig_gap.update_traces(textposition='outside')
         st.plotly_chart(fig_gap, use_container_width=True)
 
         overdue_threshold = st.slider("Highlight numbers very overdue:", min_value=0, max_value=int(gaps_df["Gap"].max()), value=int(gaps_df["Gap"].quantile(0.75)))
-        overdue_numbers = filtered_gaps[filtered_gaps["Gap"] >= overdue_threshold]["Number"].tolist()
+        overdue_numbers = gaps_df[gaps_df["Gap"] >= overdue_threshold]["Number"].tolist()
         st.info(f"⚠️ Very overdue numbers: {overdue_numbers}")
 
         # --- Ticket Generator ---
