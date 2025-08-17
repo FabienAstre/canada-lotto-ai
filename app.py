@@ -164,11 +164,55 @@ if uploaded_file:
         fig_triplets.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_triplets, use_container_width=True)
         
-        # Gap Analysis
-        st.subheader("Number Gap Analysis")
-        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
-        threshold = st.slider("Gap threshold for overdue numbers", 0, 100, 27)
-        st.dataframe(gaps_df[gaps_df["Gap"] >= threshold])
+     # ======================
+# 🔢 Number Gap Analysis (Redesigned)
+# ======================
+st.subheader("🔢 Number Gap Analysis (Overdue & Recent Numbers)")
+
+# Compute gaps
+gaps_df = pd.DataFrame({
+    "Number": list(gaps.keys()),
+    "Gap": list(gaps.values())
+}).sort_values(by="Gap", ascending=False)
+
+# Slider for minimum gap to display
+min_gap = st.slider(
+    "Show numbers with at least this many draws since last appearance:",
+    min_value=0,
+    max_value=int(gaps_df["Gap"].max()),
+    value=int(gaps_df["Gap"].median())
+)
+
+# Filter based on slider
+filtered_gaps = gaps_df[gaps_df["Gap"] >= min_gap]
+
+# Display table
+st.table(filtered_gaps.reset_index(drop=True))
+
+# Visualize as bar chart
+import plotly.express as px
+fig_gap = px.bar(
+    filtered_gaps,
+    x="Number",
+    y="Gap",
+    color="Gap",
+    color_continuous_scale="Oranges",
+    text="Gap",
+    title=f"Numbers with Gap ≥ {min_gap} Draws"
+)
+fig_gap.update_traces(textposition='outside')
+st.plotly_chart(fig_gap, use_container_width=True)
+
+# Optional: highlight overdue numbers
+overdue_threshold = st.slider(
+    "Highlight numbers considered 'very overdue':",
+    min_value=0,
+    max_value=int(gaps_df["Gap"].max()),
+    value=int(gaps_df["Gap"].quantile(0.75))
+)
+
+overdue_numbers = filtered_gaps[filtered_gaps["Gap"] >= overdue_threshold]["Number"].tolist()
+st.info(f"⚠️ Numbers very overdue: {overdue_numbers}")
         
         # Ticket Generator
         st.subheader("🎟️ Generate Lotto Tickets")
