@@ -6,41 +6,29 @@ from itertools import combinations
 import random
 import plotly.express as px
 
-# --- Streamlit Config ---
-st.set_page_config(
-    page_title="🎲 Canada Lotto 6/49 Analyzer",
-    page_icon="🎲",
-    layout="wide"
-)
+# Streamlit config
+st.set_page_config(page_title="🎲 Canada Lotto 6/49 Analyzer", page_icon="🎲", layout="wide")
 st.title("🎲 Canada Lotto 6/49 Analyzer")
-st.write("Analyze historical draws, identify patterns, generate tickets, and check combinations.")
+st.write("Analyze historical draws, identify patterns, generate tickets, and see predictions.")
 
 # --- Helper Functions ---
-
 def extract_numbers_and_bonus(df):
     main_cols = [f"NUMBER DRAWN {i}" for i in range(1,7)]
     bonus_col = "BONUS NUMBER"
-    
+
     if not all(col in df.columns for col in main_cols):
         return None, None, None
-    
-    main_numbers_df = df[main_cols].apply(pd.to_numeric, errors='coerce').dropna()
-    if not main_numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
-        return None, None, None
-    
-    bonus_series = None
+
+    numbers_df = df[main_cols].apply(pd.to_numeric, errors='coerce').dropna().astype(int)
     if bonus_col in df.columns:
-        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna()
-        if not bonus_series.between(1,49).all():
-            bonus_series = None
-    
-    date_col = next((c for c in ['DATE','Draw Date','Draw_Date','Date'] if c in df.columns), None)
-    dates = None
-    if date_col:
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-        dates = df[date_col]
-    
-    return main_numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
+        bonus_series = pd.to_numeric(df[bonus_col], errors='coerce').dropna().astype(int)
+    else:
+        bonus_series = None
+
+    date_col = next((c for c in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if c in df.columns), None)
+    dates = pd.to_datetime(df[date_col], errors='coerce') if date_col else None
+
+    return numbers_df, bonus_series, dates
 
 @st.cache_data
 def compute_frequencies(numbers_df):
@@ -61,139 +49,198 @@ def compute_triplet_frequencies(numbers_df, limit=500):
     return triplet_counts
 
 def compute_number_gaps(numbers_df, dates=None):
-    last_seen = {n:-1 for n in range(1,50)}
-    gaps = {}
-    
-    numbers_df = numbers_df.reset_index(drop=True) if dates is None else numbers_df.iloc[dates.argsort()].reset_index(drop=True)
-    
-    for idx, row in numbers_df.iterrows():
+    last_seen = {n: -1 for n in range(1,50)}
+    df = numbers_df.copy()
+    if dates is not None:
+        df = df.iloc[dates.argsort()].reset_index(drop=True)
+    else:
+        df = df.reset_index(drop=True)
+    for idx, row in df.iterrows():
         for n in row.values:
             last_seen[n] = idx
-    
-    total = len(numbers_df)
-    for n in range(1,50):
-        gaps[n] = total - 1 - last_seen[n] if last_seen[n] != -1 else total
-    return gaps
+    total = len(df)
+    return {n: total-1-last_seen[n] if last_seen[n]!=-1 else total for n in range(1,50)}
 
-def most_common_per_position(numbers_df):
+def most_common_per_draw_position(numbers_df):
     result = {}
     for col in numbers_df.columns:
         counts = Counter(numbers_df[col])
-        num, freq = counts.most_common(1)[0]
-        result[col] = (num, freq)
+        most_common_num, freq = counts.most_common(1)[0]
+        result[col] = (most_common_num, freq)
     return result
 
-# --- File Upload ---
-uploaded_file = st.file_uploader("Upload a Lotto 6/49 CSV", type=["csv"])
-if not uploaded_file:
-    st.info("Please upload a CSV file with draw results.")
-    st.stop()
+# --- Main App ---
+uploaded_file = st.file_uploader(
+    "Upload a Lotto 6/49 CSV file",
+    type=["csv"],
+    help="CSV with columns: NUMBER DRAWN 1 to 6, BONUS NUMBER, and optional DATE"
+)
 
-try:
-    df = pd.read_csv(uploaded_file)
-    df = df.sort_values(by=next((c for c in ['DATE','Draw Date','Draw_Date','Date'] if c in df.columns), df.columns[0]), ascending=True)
-    st.subheader(f"Uploaded Data ({len(df)} draws)")
-    st.dataframe(df.reset_index(drop=True))
-    
-    # --- Select Recent Draws ---
-    draws_to_use = st.slider("Number of recent draws to analyze", min_value=50, max_value=len(df), value=min(300,len(df)), step=10)
-    df_used = df.tail(draws_to_use).reset_index(drop=True)
-    
-    numbers_df, bonus_series, dates = extract_numbers_and_bonus(df_used)
-    if numbers_df is None:
-        st.error("CSV must have columns 'NUMBER DRAWN 1' to '6' with values 1-49.")
-        st.stop()
-    
-    # --- Hot & Cold Numbers ---
-    st.subheader("🔥 Hot Numbers")
-    counter = compute_frequencies(numbers_df)
-    hot = [num for num, _ in counter.most_common(6)]
-    cols = st.columns(len(hot))
-    for i,num in enumerate(hot):
-        cols[i].metric("", num)
-    
-    st.subheader("❄️ Cold Numbers")
-    cold = [num for num, _ in counter.most_common()[:-7:-1]]
-    cols = st.columns(len(cold))
-    for i,num in enumerate(cold):
-        cols[i].metric("", num)
-    
-    # --- Frequency Charts ---
-    st.subheader("📊 Number Frequency")
-    freq_df = pd.DataFrame({"Number": range(1,50), "Frequency":[counter.get(n,0) for n in range(1,50)]})
-    fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", color_continuous_scale="Blues", title=f"Frequency Last {draws_to_use} Draws")
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # --- Pair & Triplet Charts ---
-    st.subheader("Number Pair Frequency")
-    pair_counts = compute_pair_frequencies(numbers_df, limit=draws_to_use)
-    pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair","Count"]).sort_values("Count", ascending=False).head(20)
-    pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-    fig_pairs = px.bar(pairs_df, y="Pair", x="Count", orientation='h', color="Count", color_continuous_scale="Viridis")
-    fig_pairs.update_layout(yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig_pairs, use_container_width=True)
-    
-    st.subheader("Number Triplet Frequency")
-    triplet_counts = compute_triplet_frequencies(numbers_df, limit=draws_to_use)
-    triplets_df = pd.DataFrame(triplet_counts.items(), columns=["Triplet","Count"]).sort_values("Count", ascending=False).head(20)
-    triplets_df["Triplet"] = triplets_df["Triplet"].apply(lambda x: f"{x[0]} & {x[1]} & {x[2]}")
-    fig_triplets = px.bar(triplets_df, y="Triplet", x="Count", orientation='h', color="Count", color_continuous_scale="Cividis")
-    fig_triplets.update_layout(yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig_triplets, use_container_width=True)
-    
-    # --- Number Gap Analysis (Table Design) ---
-    st.subheader("🔢 Number Gap Analysis")
-    gaps = compute_number_gaps(numbers_df, dates)
-    gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Draws Since Last": list(gaps.values())}).sort_values("Draws Since Last", ascending=False)
-    
-    threshold = st.slider("Show numbers with at least this many draws since last appearance", 0, max(gaps.values()), value=20)
-    st.dataframe(gaps_df[gaps_df["Draws Since Last"] >= threshold].reset_index(drop=True))
-    
-    # --- Ticket Generator ---
-    st.subheader("🎟️ Generate Lotto Tickets")
-    strategy = st.selectbox("Strategy", ["Pure Random","Bias: Hot","Bias: Cold","Bias: Overdue","Mixed"])
-    num_tickets = st.slider("Number of tickets", 1, 10, 5)
-    
-    def generate_ticket(pool):
-        return sorted(random.sample(pool,6))
-    
-    generated_tickets = []
-    for _ in range(num_tickets):
-        if strategy=="Pure Random":
-            pool = list(range(1,50))
-        elif strategy=="Bias: Hot":
-            pool = hot + random.sample([n for n in range(1,50) if n not in hot], 43)
-        elif strategy=="Bias: Cold":
-            pool = cold + random.sample([n for n in range(1,50) if n not in cold], 43)
-        elif strategy=="Bias: Overdue":
-            top_gap = [n for n,_ in sorted(gaps.items(), key=lambda x:x[1], reverse=True)[:10]]
-            pool = top_gap + random.sample([n for n in range(1,50) if n not in top_gap], 39)
-        elif strategy=="Mixed":
-            pool = hot[:3] + cold[:2] + random.sample([n for n in range(1,50) if n not in hot[:3]+cold[:2]], 49-5)
-        generated_tickets.append(generate_ticket(pool))
-    
-    for idx,t in enumerate(generated_tickets,1):
-        st.write(f"Ticket {idx}: {t}")
-    
-    # --- Check if a Combination Already Appeared ---
-    st.subheader("🔍 Check if a Draw Combination Has Already Appeared (All History)")
-    user_draw = st.text_input("Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45)", key="combo_check")
-    
-    if user_draw.strip():
-        try:
-            numbers_entered = [int(x.strip()) for x in user_draw.split(",")]
-            if len(numbers_entered)!=6 or not all(1<=n<=49 for n in numbers_entered):
-                raise ValueError("Enter exactly 6 numbers between 1-49.")
-            user_tuple = tuple(sorted(numbers_entered))
-            
-            matches_idx = [i for i,row in enumerate(numbers_df.values.tolist()) if tuple(sorted(row))==user_tuple]
-            if matches_idx:
-                st.success(f"✅ This combination appeared {len(matches_idx)} time(s)!")
-                st.write("Occurrences (row indexes):", [i+1 for i in matches_idx])
-            else:
-                st.error("❌ This combination never appeared.")
-        except Exception as e:
-            st.error(f"⚠️ {e}")
-    
-except Exception as e:
-    st.error(f"❌ Error reading CSV: {e}")
+if uploaded_file:
+    try:
+        df = pd.read_csv(uploaded_file)
+        date_col = next((c for c in ['DATE', 'Draw Date', 'Draw_Date', 'Date'] if c in df.columns), None)
+        if date_col:
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            df = df.sort_values(date_col)
+
+        st.subheader(f"Uploaded Data ({len(df)} draws)")
+        st.dataframe(df.reset_index(drop=True))
+
+        # Select how many recent draws to analyze
+        max_draws = len(df)
+        draws_to_use = st.slider("Number of recent draws to analyze", min_value=50, max_value=max_draws, value=min(300,max_draws), step=10)
+        df_used = df.tail(draws_to_use).reset_index(drop=True)
+
+        # Extract numbers
+        numbers_df, bonus_series, dates = extract_numbers_and_bonus(df_used)
+        if numbers_df is None:
+            st.error("CSV must have valid columns 'NUMBER DRAWN 1' to 'NUMBER DRAWN 6'")
+            st.stop()
+
+        # Frequencies & stats
+        counter = compute_frequencies(numbers_df)
+        hot_counts = counter.most_common(6)
+        cold_counts = counter.most_common()[:-7:-1]
+        gaps = compute_number_gaps(numbers_df, dates)
+        position_most_common = most_common_per_draw_position(numbers_df)
+
+        # --- Hot & Cold Numbers ---
+        st.subheader("🔥 Hot Numbers")
+        cols = st.columns(len(hot_counts))
+        for i, (num, freq) in enumerate(hot_counts):
+            cols[i].metric(f"#{num}", f"{freq} times")
+
+        st.subheader("❄️ Cold Numbers")
+        cols = st.columns(len(cold_counts))
+        for i, (num, freq) in enumerate(cold_counts):
+            cols[i].metric(f"#{num}", f"{freq} times")
+
+        # --- Number Gap Analysis ---
+        st.subheader("🔢 Number Gap Analysis")
+        gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values("Gap", ascending=False)
+
+        min_gap = st.slider(
+            "Show numbers with at least this many draws since last appearance",
+            0, int(max(gaps.values())), 20
+        )
+        filtered_gaps = gaps_df[gaps_df["Gap"] >= min_gap].reset_index(drop=True)
+        st.dataframe(filtered_gaps)
+
+        # Visualize gap chart
+        fig_gap = px.bar(
+            filtered_gaps,
+            x="Number",
+            y="Gap",
+            color="Gap",
+            color_continuous_scale="Oranges",
+            text="Gap",
+            title=f"Numbers with Gap ≥ {min_gap} Draws"
+        )
+        fig_gap.update_traces(textposition='outside')
+        st.plotly_chart(fig_gap, use_container_width=True)
+
+        # Highlight very overdue numbers
+        overdue_threshold = st.slider(
+            "Highlight numbers considered 'very overdue'",
+            0, int(gaps_df["Gap"].max()), int(gaps_df["Gap"].quantile(0.75))
+        )
+        overdue_numbers = filtered_gaps[filtered_gaps["Gap"] >= overdue_threshold]["Number"].tolist()
+        if overdue_numbers:
+            st.info(f"⚠️ Numbers very overdue: {overdue_numbers}")
+
+        # --- Ticket Generator ---
+        st.subheader("🎟️ Generate Lotto Tickets")
+        strategy = st.selectbox("Strategy", ["Pure Random","Bias: Hot","Bias: Cold","Bias: Overdue","Mixed"])
+        num_tickets = st.slider("Number of tickets",1,10,5)
+
+        def generate_ticket(pool):
+            return sorted(random.sample(pool, 6))
+
+        generated_tickets = []
+        for _ in range(num_tickets):
+            if strategy=="Pure Random":
+                pool = list(range(1,50))
+            elif strategy=="Bias: Hot":
+                pool = [n for n,_ in hot_counts] + [n for n in range(1,50) if n not in [x for x,_ in hot_counts]]
+            elif strategy=="Bias: Cold":
+                pool = [n for n,_ in cold_counts] + [n for n in range(1,50) if n not in [x for x,_ in cold_counts]]
+            elif strategy=="Bias: Overdue":
+                top_gap = [n for n,g in sorted(gaps.items(), key=lambda x:x[1], reverse=True)[:10]]
+                pool = top_gap + [n for n in range(1,50) if n not in top_gap]
+            elif strategy=="Mixed":
+                pool = [n for n,_ in hot_counts[:3]] + [n for n,_ in cold_counts[:2]]
+                pool += [n for n in range(1,50) if n not in pool]
+            generated_tickets.append(generate_ticket(pool))
+
+        st.write("🎰 Generated Tickets:")
+        for i,ticket in enumerate(generated_tickets,1):
+            st.write(f"Ticket {i}: {ticket}")
+
+        # --- ML-Based Prediction ---
+        st.subheader("🧠 ML-Based Prediction (Experimental)")
+        must_include = st.multiselect("Numbers to include in ML tickets", options=list(range(1,50)), default=[])
+        num_ml_tickets = st.slider("ML predicted tickets",1,10,3)
+        predicted_numbers = [num for num,_ in counter.most_common(12)]
+        st.write("Base predicted numbers:", predicted_numbers)
+
+        def generate_ml_ticket(must_include,predicted):
+            ticket = must_include.copy()
+            pool = [n for n in predicted if n not in ticket]
+            while len(ticket)<6 and pool:
+                ticket.append(pool.pop(0))
+            while len(ticket)<6:
+                candidate = random.randint(1,49)
+                if candidate not in ticket:
+                    ticket.append(candidate)
+            return sorted(ticket)
+
+        for i in range(num_ml_tickets):
+            st.write(f"ML Ticket {i+1}: {generate_ml_ticket(must_include, predicted_numbers)}")
+
+        # --- Position-Based Prediction ---
+        st.subheader("🎯 Position-Based Prediction Tickets")
+        must_include_pos = st.multiselect("Numbers to include", options=list(range(1,50)), default=[])
+        num_pos_pred_tickets = st.slider("Position-based tickets",1,10,3)
+
+        def generate_position_based_ticket(position_most_common, must_include=[]):
+            ticket = list({num for num,_ in position_most_common.values()})
+            for n in must_include:
+                if n not in ticket:
+                    ticket.append(n)
+            while len(ticket)<6:
+                candidate = random.randint(1,49)
+                if candidate not in ticket:
+                    ticket.append(candidate)
+            while len(ticket)>6:
+                ticket.remove(random.choice([n for n in ticket if n not in must_include]))
+            return sorted(ticket)
+
+        for i in range(num_pos_pred_tickets):
+            st.write(f"Position-Based Ticket {i+1}: {generate_position_based_ticket(position_most_common, must_include_pos)}")
+
+        # --- Check if a Draw Combination Has Already Appeared ---
+        st.subheader("🔍 Check if a Draw Combination Has Already Appeared (All History)")
+        user_draw = st.text_input("Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):", key="check_draw_combo")
+        if user_draw.strip():
+            try:
+                numbers_entered = [int(x.strip()) for x in user_draw.split(",")]
+                if len(numbers_entered)!=6 or not all(1<=n<=49 for n in numbers_entered):
+                    raise ValueError("Enter exactly 6 numbers between 1-49")
+                user_numbers = tuple(sorted(numbers_entered))
+                past_draws = [tuple(sorted(row)) for row in numbers_df.values.tolist()]
+                matches_idx = [i for i,row in enumerate(numbers_df.values.tolist()) if tuple(sorted(row))==user_numbers]
+                if matches_idx:
+                    st.success(f"✅ Combination appeared {len(matches_idx)} time(s)")
+                    st.write("Occurrences:")
+                    for i in matches_idx:
+                        st.write(f"- {df_used.iloc[i][df_used.columns[:6]].tolist()}")
+                else:
+                    st.error("❌ Combination never appeared")
+            except Exception as e:
+                st.error(f"⚠️ Invalid input: {e}")
+
+    except Exception as e:
+        st.error(f"❌ Error reading CSV: {e}")
+else:
+    st.info("Please upload a CSV file with Lotto 6/49 draw results.")
