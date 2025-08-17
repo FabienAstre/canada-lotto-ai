@@ -20,7 +20,6 @@ st.write("Analyze historical draws, identify patterns, generate tickets, and see
 # Helper Functions
 # -------------------
 def extract_numbers_and_bonus(df):
-    """Extract main numbers and bonus column, optionally parse dates"""
     main_cols = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
     bonus_col = "BONUS NUMBER"
     
@@ -85,17 +84,22 @@ def most_common_per_position(numbers_df):
     result = {}
     for col in numbers_df.columns:
         num, freq = Counter(numbers_df[col]).most_common(1)[0]
-        result[col] = (num, freq)
+        result[col] = (int(num), int(freq))
     return result
 
 def generate_ticket(pool):
-    return sorted(random.sample(pool, 6))
+    return sorted(int(n) for n in random.sample(pool, 6))
 
 def generate_ml_ticket(must_include, predicted_numbers):
-    ticket = must_include.copy()
-    pool = [n for n in predicted_numbers if n not in ticket]
+    ticket = [int(n) for n in must_include]
+    pool = [int(n) for n in predicted_numbers if int(n) not in ticket]
     needed = 6 - len(ticket)
-    ticket += random.sample(pool, needed) if len(pool) >= needed else pool + random.sample([n for n in range(1,50) if n not in ticket], 6-len(ticket))
+    if len(pool) >= needed:
+        ticket += [int(n) for n in random.sample(pool, needed)]
+    else:
+        ticket += [int(n) for n in pool]
+        remaining_pool = [n for n in range(1,50) if n not in ticket]
+        ticket += random.sample(remaining_pool, 6-len(ticket))
     swap_count = random.randint(1,2)
     for _ in range(swap_count):
         idx = random.randint(0,5)
@@ -103,10 +107,10 @@ def generate_ml_ticket(must_include, predicted_numbers):
         available = [n for n in range(1,50) if n not in ticket]
         if not available: break
         ticket[idx] = random.choice(available)
-    return sorted(ticket)
+    return sorted(int(n) for n in ticket)
 
 def generate_position_based_ticket(position_dict, must_include=[]):
-    ticket = list({v[0] for v in position_dict.values()})
+    ticket = list({int(v[0]) for v in position_dict.values()})
     for n in must_include:
         if n not in ticket: ticket.append(n)
     while len(ticket) < 6:
@@ -123,7 +127,7 @@ def generate_position_based_ticket(position_dict, must_include=[]):
         available = [n for n in range(1,50) if n not in ticket]
         if not available: break
         ticket[idx] = random.choice(available)
-    return sorted(ticket)
+    return sorted(int(n) for n in ticket)
 
 # -------------------
 # File Upload
@@ -147,11 +151,11 @@ if uploaded_file:
 
         # --- Hot & Cold Numbers ---
         st.subheader("🔥 Hot & ❄️ Cold Numbers")
-       counter = compute_frequencies(numbers_df)
-hot = [int(n) for n,_ in counter.most_common(6)]
-cold = [int(n) for n,_ in counter.most_common()[:-7:-1]]
-st.write(f"Hot Numbers: {hot}")
-st.write(f"Cold Numbers: {cold}")
+        counter = compute_frequencies(numbers_df)
+        hot = [int(n) for n,_ in counter.most_common(6)]
+        cold = [int(n) for n,_ in counter.most_common()[:-7:-1]]
+        st.write(f"Hot Numbers: {hot}")
+        st.write(f"Cold Numbers: {cold}")
 
         # --- Most Common per Position ---
         st.subheader("Most Common Numbers by Draw Position")
@@ -181,19 +185,24 @@ st.write(f"Cold Numbers: {cold}")
         fig_triplets.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_triplets, use_container_width=True)
 
-        # --- Number Gap Analysis ---
+        # --- Number Gap Analysis with Slider ---
         st.subheader("🔢 Number Gap Analysis")
         gaps = compute_number_gaps(numbers_df, dates)
         gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
-        # Show only top 10
-        top_gaps_df = gaps_df.head(10)
-        st.table(top_gaps_df)
-        fig_gap = px.bar(top_gaps_df, x="Number", y="Gap", color="Gap", color_continuous_scale="Oranges", text="Gap", title="Top 10 Number Gaps")
+        
+        min_gap_slider = st.slider("Show numbers with at least this many draws since last appearance:", 
+                                   min_value=0, max_value=int(gaps_df["Gap"].max()), value=0)
+        filtered_gaps = gaps_df[gaps_df["Gap"] >= min_gap_slider].sort_values(by="Gap", ascending=False)
+        st.table(filtered_gaps.head(10))
+        
+        fig_gap = px.bar(filtered_gaps, x="Number", y="Gap", color="Gap", color_continuous_scale="Oranges", text="Gap",
+                         title=f"Numbers with Gap ≥ {min_gap_slider}")
         fig_gap.update_traces(textposition='outside')
         st.plotly_chart(fig_gap, use_container_width=True)
 
-        overdue_threshold = st.slider("Highlight numbers very overdue:", min_value=0, max_value=int(gaps_df["Gap"].max()), value=int(gaps_df["Gap"].quantile(0.75)))
-        overdue_numbers = gaps_df[gaps_df["Gap"] >= overdue_threshold]["Number"].tolist()
+        overdue_threshold = st.slider("Highlight numbers very overdue:", min_value=0, max_value=int(gaps_df["Gap"].max()), 
+                                      value=int(gaps_df["Gap"].quantile(0.75)))
+        overdue_numbers = filtered_gaps[filtered_gaps["Gap"] >= overdue_threshold]["Number"].tolist()
         st.info(f"⚠️ Very overdue numbers: {overdue_numbers}")
 
         # --- Ticket Generator ---
@@ -205,7 +214,7 @@ st.write(f"Cold Numbers: {cold}")
             if strategy=="Pure Random": pool=list(range(1,50))
             elif strategy=="Hot Bias": pool=hot + [n for n in range(1,50) if n not in hot]
             elif strategy=="Cold Bias": pool=cold + [n for n in range(1,50) if n not in cold]
-            elif strategy=="Overdue Bias": pool = sorted(gaps.items(), key=lambda x:x[1],reverse=True)[:10]; pool=[n for n,_ in pool]+[n for n in range(1,50) if n not in [n for n,_ in pool]]
+            elif strategy=="Overdue Bias": pool = [n for n,_ in sorted(gaps.items(), key=lambda x:x[1],reverse=True)[:10]] + [n for n in range(1,50) if n not in [n for n,_ in sorted(gaps.items(), key=lambda x:x[1],reverse=True)[:10]]]
             elif strategy=="Mixed": pool = hot[:3]+cold[:2]+[n for n in range(1,50) if n not in hot[:3]+cold[:2]]
             tickets.append(generate_ticket(pool))
         for idx, t in enumerate(tickets,1): st.write(f"Ticket {idx}: {t}")
@@ -214,7 +223,7 @@ st.write(f"Cold Numbers: {cold}")
         st.subheader("🧠 ML-based Prediction (Experimental)")
         must_include = st.multiselect("Numbers to include in every ML ticket", options=list(range(1,50)), default=[])
         num_ml = st.slider("ML tickets to generate", 1, 10, 3)
-        predicted_numbers = [n for n,_ in counter.most_common(12)]
+        predicted_numbers = [int(n) for n,_ in counter.most_common(12)]
         for i in range(num_ml):
             ml_ticket = generate_ml_ticket(must_include, predicted_numbers)
             st.write(f"ML Ticket {i+1}: {ml_ticket}")
