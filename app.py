@@ -87,6 +87,7 @@ def most_common_per_position(numbers_df):
         result[col] = (int(num), int(freq))
     return result
 
+# --- Ticket Generators ---
 def generate_ticket(pool):
     return sorted(int(n) for n in random.sample(pool, 6))
 
@@ -133,6 +134,28 @@ def generate_position_based_ticket(position_dict, must_include=[]):
             break
         ticket[idx] = random.choice(available)
     return sorted(ticket)
+
+def generate_balanced_ticket():
+    """
+    Generate a balanced Lotto 6/49 ticket:
+    - 3 odd, 3 even
+    - 2 from low (1–16), 2 from mid (17–33), 2 from high (34–49)
+    - sum between 100–180
+    """
+    while True:  # retry until sum is in range
+        ticket = []
+        low_pool = list(range(1,17))
+        mid_pool = list(range(17,34))
+        high_pool = list(range(34,50))
+        ticket += random.sample(low_pool, 2)
+        ticket += random.sample(mid_pool, 2)
+        ticket += random.sample(high_pool, 2)
+        ticket = sorted(ticket)
+        odds = sum(1 for n in ticket if n % 2 == 1)
+        evens = 6 - odds
+        ticket_sum = sum(ticket)
+        if odds == 3 and evens == 3 and 100 <= ticket_sum <= 180:
+            return ticket
 
 # -------------------
 # File Upload
@@ -211,7 +234,10 @@ if uploaded_file:
         # --- Ticket Generator ---
         st.subheader("🎟️ Generate Tickets")
         num_tickets = st.slider("Number of tickets to generate", min_value=1, max_value=10, value=6)
-        strategy = st.selectbox("Ticket Generation Strategy", ["Mixed (Recommended)", "Pure Random","Hot Bias","Cold Bias","Overdue Bias","ML Prediction","Position-Based"])
+        strategy = st.selectbox("Ticket Generation Strategy", [
+            "Mixed (Recommended)", "Pure Random","Hot Bias","Cold Bias",
+            "Overdue Bias","ML Prediction","Position-Based","Balanced"
+        ])
 
         tickets = []
         predicted_numbers = [int(n) for n,_ in counter.most_common(12)]
@@ -231,6 +257,8 @@ if uploaded_file:
             elif strategy == "Mixed (Recommended)":
                 mixed_pool = hot[:3] + cold[:2] + [n for n in range(1,50) if n not in hot[:3]+cold[:2]]
                 tickets.append(generate_ticket(mixed_pool))
+            elif strategy == "Balanced":
+                tickets.append(generate_balanced_ticket())
 
         st.subheader(f"🎯 Generated {num_tickets} Tickets")
         for idx, t in enumerate(tickets, 1):
