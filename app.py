@@ -209,9 +209,18 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
     return last_ticket
 
 # ======================
-# Extract numbers, bonus, dates
+# Combine numbers, bonus, and dates for display
 # ======================
-numbers_df, bonus_series, dates = extract_numbers_and_bonus(df)
 display_df = numbers_df.copy()
+
 if bonus_series is not None:
-    display_df["BON
+    display_df["BONUS NUMBER"] = bonus_series.astype("Int64").values
+
+if dates is not None:
+    display_df["DATE"] = dates.values
+
+# Optional: add row numbers for clarity
+display_df.index = range(1, len(display_df) + 1)
+
+st.subheader("📄 Historical Draws")
+st.dataframe(display_df)
