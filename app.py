@@ -406,8 +406,9 @@ with tab2:
         if ticket:
             tickets.append(ticket)
     st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
+for i, t in enumerate(tickets, 1):
+    t_clean = [int(n) for n in t]  # Convert np.int64 → int
+    st.write(f"Ticket {i}: {t_clean}")
 
 # ------- Tab 3: Cluster / Zone Coverage -------
 with tab3:
