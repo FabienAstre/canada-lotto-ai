@@ -661,7 +661,7 @@ if uploaded_file:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
 
     st.subheader("Historical Draws")
-    st.dataframe(df.tail(10))
+    st.dataframe(df.tail(1200))
 
     # ======================
     # Feature Engineering
