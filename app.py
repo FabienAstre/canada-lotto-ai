@@ -264,15 +264,19 @@ if uploaded_file:
 st.sidebar.header("⚙️ Global Controls")
 
 # Ensure numbers_df exists
-if "numbers_df" not in locals():
+if "numbers_df" not in locals() or numbers_df is None:
     numbers_df = pd.DataFrame(columns=[f"NUMBER DRAWN {i}" for i in range(1, 7)])
 
-# Draws selection
+# Determine slider range safely
 max_draws = len(numbers_df)
+safe_min = min(10, max_draws) if max_draws > 0 else 1
+safe_max = max(max_draws, 10)
+
 draw_limit = st.sidebar.slider(
-    "Number of past draws to analyze", 
-    min_value=10, max_value=max_draws if max_draws > 0 else 10,  # avoid zero max
-    value=max_draws if max_draws > 0 else 10
+    "Number of past draws to analyze",
+    min_value=safe_min,
+    max_value=safe_max,
+    value=safe_max
 )
 
 if max_draws > 0:
