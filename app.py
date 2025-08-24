@@ -261,13 +261,10 @@ odd_count = None if odd_mode == "Any" else int(odd_mode.split()[0]) if odd_mode.
 # =============
 # Combine numbers, bonus, and dates for display
 display_df = numbers_df.copy()
-
 if bonus_series is not None:
-    # Align bonus numbers with numbers_df index
-    display_df["BONUS NUMBER"] = bonus_series.reindex(numbers_df.index).values
-
+    display_df["BONUS NUMBER"] = bonus_series.astype("Int64").values
 if dates is not None:
-    display_df["DATE"] = dates.reindex(numbers_df.index).values
+    display_df["DATE"] = dates.values
 
 st.subheader(f"📄 Analyzed Draws: {len(numbers_df)} (from uploaded file)")
 st.dataframe(display_df)
