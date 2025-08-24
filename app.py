@@ -94,7 +94,6 @@ def most_common_per_position(numbers_df: pd.DataFrame):
 def generate_ticket(pool: list[int]):
     pool = [int(n) for n in pool]
     if len(pool) < 6:
-        # Fallback to full range if pool too small
         pool = [n for n in range(1, 50)]
     return sorted(random.sample(pool, 6))
 
@@ -121,7 +120,6 @@ def compute_delta_distribution(numbers_df: pd.DataFrame):
     return Counter(deltas)
 
 def generate_delta_ticket(delta_counter: Counter):
-    # Use top K deltas to assemble a sequence
     top_deltas = [d for d, _ in delta_counter.most_common(10)] or [1, 2, 3, 4, 5]
     for _ in range(200):
         start = random.randint(1, 20)
@@ -135,14 +133,12 @@ def generate_delta_ticket(delta_counter: Counter):
     return sorted(random.sample(range(1, 50), 6))
 
 # Zone Coverage
-
 def generate_zone_ticket(mode: str = "3-zone"):
     if mode == "3-zone":
         low = random.sample(range(1, 17), 2)
         mid = random.sample(range(17, 34), 2)
         high = random.sample(range(34, 50), 2)
         return sorted(low + mid + high)
-    # quartiles
     q1 = random.sample(range(1, 13), 1)
     q2 = random.sample(range(13, 25), 2)
     q3 = random.sample(range(25, 37), 2)
@@ -150,7 +146,6 @@ def generate_zone_ticket(mode: str = "3-zone"):
     return sorted(q1 + q2 + q3 + q4)
 
 # Constraints & Exclusions
-
 def passes_constraints(ticket: list[int], sum_min: int, sum_max: int, spread_min: int, spread_max: int, odd_count: int | None):
     total = sum(ticket)
     spread = max(ticket) - min(ticket)
@@ -166,7 +161,6 @@ def passes_constraints(ticket: list[int], sum_min: int, sum_max: int, spread_min
 def apply_exclusions_to_pool(pool: list[int], excluded: set[int]):
     pool = [n for n in pool if n not in excluded]
     if len(pool) < 6:
-        # If exclusions make pool too small, relax gracefully by refilling with allowed numbers
         pool = [n for n in range(1, 50) if n not in excluded]
     return pool
 
@@ -190,7 +184,6 @@ def generate_repeat_ticket(last_draw: set[int], excluded: set[int], repeat_count
     return sorted(chosen_repeats + rest)
 
 # Simulation
-
 def simulate_strategy(strategy_func, numbers_df: pd.DataFrame, n: int = 1000):
     past_draws = [set(row) for row in numbers_df.values.tolist()]
     results = {3: 0, 4: 0, 5: 0, 6: 0}
@@ -203,7 +196,6 @@ def simulate_strategy(strategy_func, numbers_df: pd.DataFrame, n: int = 1000):
     return results
 
 # Utility – constrained ticket generation
-
 def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min, spread_max, odd_count, max_tries: int = 200):
     last_ticket = None
     for _ in range(max_tries):
@@ -211,7 +203,6 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
         last_ticket = t
         if passes_constraints(t, sum_min, sum_max, spread_min, spread_max, odd_count):
             return t
-    # If nothing matched constraints, return the last attempt (or None)
     return last_ticket
 
 # ======================
@@ -245,6 +236,10 @@ st.sidebar.header("⚙️ Global Controls")
 max_draws = len(numbers_df)
 draw_limit = st.sidebar.slider("Number of past draws to analyze", min_value=10, max_value=max_draws, value=max_draws)
 numbers_df = numbers_df.tail(draw_limit).reset_index(drop=True)
+if bonus_series is not None:
+    bonus_series = bonus_series.tail(draw_limit).reset_index(drop=True)
+if dates is not None:
+    dates = dates.tail(draw_limit).reset_index(drop=True)
 
 num_tickets = st.sidebar.slider("Tickets to generate (per tab)", 1, 12, 6)
 excluded_str = st.sidebar.text_input("Exclude numbers (comma-separated)", "")
@@ -252,15 +247,21 @@ excluded = {int(x.strip()) for x in excluded_str.split(",") if x.strip().isdigit
 
 sum_min, sum_max = st.sidebar.slider("Sum range", 60, 250, (100, 180))
 spread_min, spread_max = st.sidebar.slider("Spread range (max - min)", 5, 48, (10, 40))
-odd_mode = st.sidebar.selectbox("Odd/Even constraint", ["Any", "Exactly 0 odd", "1", "2", "3", "4", "5", "6"])  # string for nicer label
+odd_mode = st.sidebar.selectbox("Odd/Even constraint", ["Any", "Exactly 0 odd", "1", "2", "3", "4", "5", "6"])
 odd_count = None if odd_mode == "Any" else int(odd_mode.split()[0]) if odd_mode.startswith("Exactly") else int(odd_mode)
 
-# =============
-# Analytics
-# =============
+# ======================
+# Display analyzed draws (with Bonus & Date)
+# ======================
+
+display_df = numbers_df.copy()
+if bonus_series is not None:
+    display_df["BONUS NUMBER"] = bonus_series.astype(int)
+if dates is not None:
+    display_df["DATE"] = dates
 
 st.subheader(f"📄 Analyzed Draws: {len(numbers_df)} (from uploaded file)")
-st.dataframe(numbers_df)
+st.dataframe(display_df)
 
 # Hot/Cold
 counter = compute_frequencies(numbers_df)
@@ -271,317 +272,20 @@ st.markdown("### 🔥 Hot & ❄️ Cold Numbers")
 st.write(f"**Hot (top 6):** {hot}")
 st.write(f"**Cold (bottom 6):** {cold}")
 
-# Most common per position
-st.markdown("### 📍 Most Common Numbers by Draw Position")
-pos_common = most_common_per_position(numbers_df)
-cols = st.columns(6)
-for i, (pos, (num, freq)) in enumerate(pos_common.items()):
-    with cols[i % 6]:
-        st.metric(pos, num, help=f"Appeared {freq} times")
-
-# Frequency chart
-freq_df = pd.DataFrame({"Number": list(range(1, 50)), "Frequency": [counter.get(n, 0) for n in range(1, 50)]})
-fig_freq = px.bar(freq_df, x="Number", y="Frequency", color="Frequency", color_continuous_scale="Blues", title="Number Frequency")
-st.plotly_chart(fig_freq, use_container_width=True)
-
-# Pair & Triplet charts
-st.markdown("### 🤝 Pair Frequency (top 20)")
-pair_counts = compute_pair_frequencies(numbers_df)
-pairs_df = pd.DataFrame(pair_counts.items(), columns=["Pair", "Count"]).sort_values(by="Count", ascending=False).head(20)
-pairs_df["Pair"] = pairs_df["Pair"].apply(lambda x: f"{x[0]} & {x[1]}")
-fig_pairs = px.bar(pairs_df, x="Count", y="Pair", orientation="h", color="Count", color_continuous_scale="Viridis")
-fig_pairs.update_layout(yaxis={"categoryorder": "total ascending"})
-st.plotly_chart(fig_pairs, use_container_width=True)
-
-st.markdown("### 👪 Triplet Frequency (top 20)")
-triplet_counts = compute_triplet_frequencies(numbers_df)
-triplets_df = pd.DataFrame(triplet_counts.items(), columns=["Triplet", "Count"]).sort_values(by="Count", ascending=False).head(20)
-triplets_df["Triplet"] = triplets_df["Triplet"].apply(lambda x: f"{x[0]} & {x[1]} & {x[2]}")
-fig_triplets = px.bar(triplets_df, x="Count", y="Triplet", orientation="h", color="Count", color_continuous_scale="Cividis")
-fig_triplets.update_layout(yaxis={"categoryorder": "total ascending"})
-st.plotly_chart(fig_triplets, use_container_width=True)
-
-# Number gap analysis
-st.markdown("### 🔢 Number Gap Analysis")
-gaps = compute_number_gaps(numbers_df, dates=None)
-gaps_df = pd.DataFrame({"Number": list(gaps.keys()), "Gap": list(gaps.values())}).sort_values(by="Gap", ascending=False)
-min_gap = st.slider("Show numbers with at least this many draws since last appearance:", 0, int(gaps_df["Gap"].max()), 0)
-filtered_gaps = gaps_df[gaps_df["Gap"] >= min_gap].sort_values(by="Gap", ascending=False)
-st.table(filtered_gaps.head(10))
-fig_gap = px.bar(filtered_gaps, x="Number", y="Gap", color="Gap", color_continuous_scale="Oranges", text="Gap", title=f"Numbers with Gap ≥ {min_gap}")
-fig_gap.update_traces(textposition="outside")
-st.plotly_chart(fig_gap, use_container_width=True)
-
-overdue_threshold = st.slider("Highlight numbers very overdue:", 0, int(gaps_df["Gap"].max()), int(gaps_df["Gap"].quantile(0.75)))
-overdue_numbers = filtered_gaps[filtered_gaps["Gap"] >= overdue_threshold]["Number"].tolist()
-st.info(f"⚠️ Very overdue numbers: {overdue_numbers}")
-
-# Precompute for generators
-predicted_numbers = [int(n) for n, _ in counter.most_common(12)]
-delta_counter = compute_delta_distribution(numbers_df)
-last_draw = set(numbers_df.iloc[-1])
-repeats = compute_repeat_frequency(numbers_df)
-
-# ======================
-# Ticket Lab (with explanations)
-# ======================
-
-st.header("🎟️ Ticket Lab — Generators & Simulation")
-
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Hot / Cold / Overdue",
-    "Δ Delta System",
-    "Cluster / Zone Coverage",
-    "Sum & Spread Filters",
-    "Smart Exclusion",
-    "Repeat Hit Analysis",
-    "Jackpot Simulation",
-])
-
-# ------- Tab 1: Hot/Cold/Overdue -------
-with tab1:
-    st.subheader("🔥 Hot / ❄️ Cold / ⏳ Overdue")
-    st.caption(
-        """
-        - **Hot numbers**: most frequently drawn in the selected history window.\n
-        - **Cold numbers**: least frequently drawn.\n
-        - **Overdue numbers**: have not appeared for many draws (based on Gap Analysis above).\n
-        Choose a bias to tilt the random generator toward these sets.
-        """
+# Bonus Number Frequency Chart
+if bonus_series is not None:
+    bonus_counter = Counter(bonus_series)
+    st.markdown("### 🎁 Bonus Number Frequency")
+    bonus_df = pd.DataFrame({
+        "Bonus Number": list(bonus_counter.keys()),
+        "Frequency": list(bonus_counter.values())
+    })
+    fig_bonus = px.bar(
+        bonus_df,
+        x="Bonus Number",
+        y="Frequency",
+        color="Frequency",
+        color_continuous_scale="Purples",
+        title="Bonus Number Frequency"
     )
-    choice = st.radio("Bias strategy", ["Hot", "Cold", "Overdue"], horizontal=True)
-
-    tickets = []
-    pool_base = list(range(1, 50))
-    for _ in range(num_tickets):
-        if choice == "Hot":
-            pool = hot + [n for n in pool_base if n not in hot]
-        elif choice == "Cold":
-            pool = cold + [n for n in pool_base if n not in cold]
-        else:
-            pool = overdue_numbers + [n for n in pool_base if n not in overdue_numbers]
-        pool = apply_exclusions_to_pool(pool, excluded)
-        ticket = try_generate_with_constraints(
-            lambda: generate_ticket(pool),
-            sum_min=sum_min, sum_max=sum_max,
-            spread_min=spread_min, spread_max=spread_max,
-            odd_count=odd_count,
-        )
-        if ticket:
-            tickets.append(ticket)
-
-    st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
-
-# ------- Tab 2: Delta System -------
-with tab2:
-    st.subheader("Δ Delta System")
-    st.caption(
-        """
-        Builds tickets from common **differences (gaps)** between consecutive numbers in historical draws.\n
-        Example: sequence 4, 9, 14 → deltas +5, +5. We learn the most frequent deltas and stitch them into new sequences.
-        """
-    )
-    tickets = []
-    for _ in range(num_tickets):
-        base_ticket = generate_delta_ticket(delta_counter)
-        pool = apply_exclusions_to_pool(base_ticket, excluded)  # if exclusions removed values, regenerate from pool
-        # If exclusions altered the base sequence, fallback to sampling from allowed pool
-        gen = (lambda bt=base_ticket, p=pool: bt if len(set(bt) & excluded) == 0 else generate_ticket(p))
-        ticket = try_generate_with_constraints(
-            gen,
-            sum_min=sum_min, sum_max=sum_max,
-            spread_min=spread_min, spread_max=spread_max,
-            odd_count=odd_count,
-        )
-        if ticket:
-            tickets.append(ticket)
-    st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
-
-# ------- Tab 3: Cluster / Zone Coverage -------
-with tab3:
-    st.subheader("📊 Cluster / Zone Coverage")
-    st.caption(
-        """
-        Ensures balanced coverage across number **zones** to avoid clustering: \n
-        - 3-zone: Low 1–16, Mid 17–33, High 34–49 (2 from each).\n
-        - Quartiles: 1–12, 13–24, 25–36, 37–49 (1+2+2+1).
-        """
-    )
-    mode = st.radio("Mode", ["3-zone", "Quartiles"], horizontal=True)
-    tickets = []
-    for _ in range(num_tickets):
-        base_ticket = generate_zone_ticket("3-zone" if mode == "3-zone" else "quartiles")
-        if excluded & set(base_ticket):
-            # Rebuild by sampling from allowed numbers while respecting counts per zone
-            if mode == "3-zone":
-                low = [n for n in range(1, 17) if n not in excluded]
-                mid = [n for n in range(17, 34) if n not in excluded]
-                high = [n for n in range(34, 50) if n not in excluded]
-                poolgen = lambda: sorted(random.sample(low, 2) + random.sample(mid, 2) + random.sample(high, 2)) if min(len(low), len(mid), len(high)) >= 2 else generate_ticket([n for n in range(1, 50) if n not in excluded])
-            else:
-                q1 = [n for n in range(1, 13) if n not in excluded]
-                q2 = [n for n in range(13, 25) if n not in excluded]
-                q3 = [n for n in range(25, 37) if n not in excluded]
-                q4 = [n for n in range(37, 50) if n not in excluded]
-                poolgen = lambda: sorted(random.sample(q1, 1) + random.sample(q2, 2) + random.sample(q3, 2) + random.sample(q4, 1)) if (len(q1) >= 1 and len(q2) >= 2 and len(q3) >= 2 and len(q4) >= 1) else generate_ticket([n for n in range(1, 50) if n not in excluded])
-        else:
-            poolgen = lambda bt=base_ticket: bt
-        ticket = try_generate_with_constraints(
-            poolgen,
-            sum_min=sum_min, sum_max=sum_max,
-            spread_min=spread_min, spread_max=spread_max,
-            odd_count=odd_count,
-        )
-        if ticket:
-            tickets.append(ticket)
-    st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
-
-# ------- Tab 4: Sum & Spread Filters -------
-with tab4:
-    st.subheader("➕ Sum & Spread Filters")
-    st.caption(
-        """
-        Filter tickets by mathematical properties: \n
-        - **Sum range** (total of all 6 numbers).\n
-        - **Spread** (max - min).\n
-        - **Odd/Even** exact count (via sidebar).\n
-        Use any generator (e.g., Balanced), then filter by your constraints.
-        """
-    )
-    base_choice = st.selectbox("Base generator", ["Balanced", "Pure Random"]) 
-    tickets = []
-    for _ in range(num_tickets):
-        if base_choice == "Balanced":
-            gen = generate_balanced_ticket
-        else:
-            pool = apply_exclusions_to_pool(list(range(1, 50)), excluded)
-            gen = lambda p=pool: generate_ticket(p)
-        ticket = try_generate_with_constraints(
-            gen,
-            sum_min=sum_min, sum_max=sum_max,
-            spread_min=spread_min, spread_max=spread_max,
-            odd_count=odd_count,
-        )
-        if ticket:
-            tickets.append(ticket)
-    st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
-
-# ------- Tab 5: Smart Exclusion -------
-with tab5:
-    st.subheader("🚫 Smart Exclusion")
-    st.caption(
-        """
-        Remove numbers you don't want (birthdays, unlucky, or recent hits).\n
-        All generators in other tabs already respect the global **Exclude numbers** list in the sidebar.
-        """
-    )
-    st.info(f"Currently excluding: {sorted(excluded) if excluded else 'none'}")
-    pool = apply_exclusions_to_pool(list(range(1, 50)), excluded)
-    tickets = []
-    for _ in range(num_tickets):
-        ticket = try_generate_with_constraints(
-            lambda p=pool: generate_ticket(p),
-            sum_min=sum_min, sum_max=sum_max,
-            spread_min=spread_min, spread_max=spread_max,
-            odd_count=odd_count,
-        )
-        if ticket:
-            tickets.append(ticket)
-    st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
-
-# ------- Tab 6: Repeat Hit Analysis -------
-with tab6:
-    st.subheader("🔁 Repeat Hit Analysis")
-    st.caption(
-        """
-        Measures how often numbers **repeat** from one draw to the next.\n
-        Optionally include **1–2** numbers from the **last draw** in each generated ticket.
-        """
-    )
-    repeat_count = st.slider("How many numbers to repeat from the last draw?", 0, 2, 1)
-
-    # Show top repeating numbers
-    if repeats:
-        rep_df = pd.DataFrame({"Number": list(repeats.keys()), "Consecutive Repeats": list(repeats.values())}).sort_values("Consecutive Repeats", ascending=False)
-        fig_rep = px.bar(rep_df, x="Number", y="Consecutive Repeats", title="Consecutive Repeat Frequency")
-        st.plotly_chart(fig_rep, use_container_width=True)
-
-    tickets = []
-    for _ in range(num_tickets):
-        gen = lambda: generate_repeat_ticket(last_draw, excluded, repeat_count=repeat_count)
-        ticket = try_generate_with_constraints(
-            gen,
-            sum_min=sum_min, sum_max=sum_max,
-            spread_min=spread_min, spread_max=spread_max,
-            odd_count=odd_count,
-        )
-        if ticket:
-            tickets.append(ticket)
-    st.markdown("**Generated Tickets**")
-    for i, t in enumerate(tickets, 1):
-        st.write(f"Ticket {i}: {t}")
-
-# ------- Tab 7: Jackpot Simulation -------
-with tab7:
-    st.subheader("🎰 Jackpot Pattern Simulation")
-    st.caption(
-        """
-        Simulate many tickets using a chosen generator and compare against **historical draws**.\n
-        We count how often the tickets would have matched **3/6, 4/6, 5/6, 6/6** numbers.
-        """
-    )
-    sim_n = st.slider("Number of tickets to simulate", 200, 5000, 1000, step=100)
-    sim_strategy = st.selectbox("Strategy to simulate", [
-        "Balanced", "Pure Random", "Hot Bias", "Delta System", "Zone (3-zone)", "Zone (Quartiles)", "Repeat (1)", "Repeat (2)",
-    ])
-
-    def make_strategy_callable(name: str):
-        if name == "Balanced":
-            return generate_balanced_ticket
-        if name == "Pure Random":
-            pool = apply_exclusions_to_pool(list(range(1, 50)), excluded)
-            return (lambda p=pool: generate_ticket(p))
-        if name == "Hot Bias":
-            pool = apply_exclusions_to_pool(hot + [n for n in range(1, 50) if n not in hot], excluded)
-            return (lambda p=pool: generate_ticket(p))
-        if name == "Delta System":
-            return (lambda: generate_delta_ticket(delta_counter))
-        if name == "Zone (3-zone)":
-            return (lambda: generate_zone_ticket("3-zone"))
-        if name == "Zone (Quartiles)":
-            return (lambda: generate_zone_ticket("quartiles"))
-        if name == "Repeat (1)":
-            return (lambda: generate_repeat_ticket(last_draw, excluded, repeat_count=1))
-        if name == "Repeat (2)":
-            return (lambda: generate_repeat_ticket(last_draw, excluded, repeat_count=2))
-        return (lambda: generate_ticket(apply_exclusions_to_pool(list(range(1, 50)), excluded)))
-
-    if st.button("Run Simulation"):
-        func = make_strategy_callable(sim_strategy)
-        results = simulate_strategy(func, numbers_df, n=sim_n)
-        st.json(results)
-        # Simple bar chart of results
-        res_df = pd.DataFrame({"Matches": list(results.keys()), "Count": list(results.values())}).sort_values("Matches")
-        fig_res = px.bar(res_df, x="Matches", y="Count", title="Simulation Results")
-        st.plotly_chart(fig_res, use_container_width=True)
-
-# ======================
-# Notes
-# ======================
-
-st.markdown(
-    """
-    **Disclaimer:** Lotto 6/49 is a game of chance. These analyses and generators cannot predict future draws, 
-    but they can help you explore patterns, enforce constraints, and compare strategies on historical data.
-    """
-)
+    st.plotly_chart(fig_bonus, use_container_width=True)
