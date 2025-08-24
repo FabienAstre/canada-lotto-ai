@@ -663,17 +663,16 @@ if uploaded_file:
     st.subheader("Historical Draws (last 1200)")
     st.dataframe(df.tail(1200))
 
-    # ======================
-    # Statistical Filters
-    # ======================
-    number_cols = [f"NUMBER DRAWN {i}" for i in range(1,7)]
-    sums = df[number_cols].sum(axis=1)
-    sum_digits = df[number_cols].apply(lambda row: sum(int(d) for n in row for d in str(n)), axis=1)
-    ranges = df[number_cols].max(axis=1) - df[number_cols].min(axis=1)
-    min_gaps = df[number_cols].apply(lambda row: min([row[i+1]-row[i] for i in range(5)]), axis=1)
-    max_gaps = df[number_cols].apply(lambda row: max([row[i+1]-row[i] for i in range(5)]), axis=1)
+  # ======================
+# Statistical Filters
+# ======================
+sums = feature_df['sum_numbers']
+sum_digits = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: sum(int(d) for n in row for d in str(n)), axis=1)
+ranges = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: max(row)-min(row), axis=1)
+min_gaps = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: min([row[i+1]-row[i] for i in range(5)]), axis=1)
+max_gaps = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: max([row[i+1]-row[i] for i in range(5)]), axis=1)
 
- filters = {
+filters = {
     "sum_min": int(sums.min()),
     "sum_max": int(sums.max()),
     "digit_sum_min": int(sum_digits.min()),
@@ -686,6 +685,7 @@ if uploaded_file:
     "max_gap_max": int(max_gaps.max())
 }
 
+st.write("📊 Statistical Filters", filters)
     st.subheader("Statistical Ranges Based on History")
     st.json(filters)
 
