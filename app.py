@@ -34,9 +34,8 @@ def extract_numbers_and_bonus(df: pd.DataFrame):
 
     bonus_series = None
     if bonus_col in df.columns:
-        bonus_series = pd.to_numeric(df[bonus_col], errors="coerce").dropna()
-        if not bonus_series.between(1, 49).all():
-            bonus_series = None
+    bonus_series = pd.to_numeric(df[bonus_col], errors="coerce")  # keep all rows
+    bonus_series = bonus_series.where(bonus_series.between(1, 49))  # invalid numbers become NaN
 
     # Flexible date parsing
     date_col = next((col for col in ["DATE", "Draw Date", "Draw_Date", "Date"] if col in df.columns), None)
