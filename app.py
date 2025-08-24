@@ -263,13 +263,20 @@ if uploaded_file:
 # -----------------
 st.sidebar.header("⚙️ Global Controls")
 
+# Ensure numbers_df exists
+if "numbers_df" not in locals():
+    numbers_df = pd.DataFrame(columns=[f"NUMBER DRAWN {i}" for i in range(1, 7)])
+
 # Draws selection
 max_draws = len(numbers_df)
 draw_limit = st.sidebar.slider(
     "Number of past draws to analyze", 
-    min_value=10, max_value=max_draws, value=max_draws
+    min_value=10, max_value=max_draws if max_draws > 0 else 10,  # avoid zero max
+    value=max_draws if max_draws > 0 else 10
 )
-numbers_df = numbers_df.tail(draw_limit).reset_index(drop=True)
+
+if max_draws > 0:
+    numbers_df = numbers_df.tail(draw_limit).reset_index(drop=True)
 
 # Ticket generation settings
 num_tickets = st.sidebar.slider("Tickets to generate (per tab)", 1, 12, 6)
