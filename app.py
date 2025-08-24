@@ -584,6 +584,41 @@ with tab7:
         fig_res = px.bar(res_df, x="Matches", y="Count", title="Simulation Results")
         st.plotly_chart(fig_res, use_container_width=True)
 
+
+# --- Check if Draw Combination Exists ---
+st.subheader("🔍 Check if Draw Combination Already Appeared")
+
+# Input: 6 numbers separated by commas
+user_draw = st.text_input(
+    "Enter 6 numbers separated by commas (e.g., 5,12,19,23,34,45):",
+    key="check_draw"
+)
+
+if user_draw.strip():
+    try:
+        # Parse and sort the entered numbers
+        numbers_entered = tuple(sorted(int(x.strip()) for x in user_draw.split(",")))
+
+        # Validate input
+        if len(numbers_entered) != 6:
+            raise ValueError("Enter exactly 6 numbers.")
+
+        # Compare against historical draws
+        past_draws = [tuple(sorted(row)) for row in numbers_df.values.tolist()]
+        occurrences = past_draws.count(numbers_entered)
+
+        if occurrences > 0:
+            st.success(f"✅ This combination appeared {occurrences} time(s) in history!")
+        else:
+            st.error("❌ This combination never appeared.")
+
+    except ValueError as ve:
+        st.error(f"⚠️ Invalid input: {ve}")
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {e}")
+
+else:
+    st.info("Enter 6 numbers to check if this combination has appeared in history.")
 # ======================
 # Notes
 # ======================
