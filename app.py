@@ -251,9 +251,7 @@ if uploaded_file:
     st.subheader(f"✅ Uploaded Data ({len(raw_df)} draws):")
     st.dataframe(display_df)
 
-except Exception as e:
-    st.error(f"❌ Error reading CSV: {e}")
-    st.stop()
+
 # -------------
 # Global sidebar controls
 # -------------
