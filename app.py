@@ -112,7 +112,7 @@ def generate_balanced_ticket():
         if odds == 3 and total >= 100 and total <= 180:
             return ticket
 
-# Delta System
+# --- Delta System ---
 @st.cache_data
 def compute_delta_distribution(numbers_df: pd.DataFrame):
     deltas = []
@@ -133,6 +133,7 @@ def generate_delta_ticket(delta_counter: Counter):
         seq = [n for n in seq if 1 <= n <= 49]
         if len(seq) == 6:
             return sorted(seq)
+    # fallback if no valid sequence
     return sorted(random.sample(range(1, 50), 6))
 
 # Zone Coverage
