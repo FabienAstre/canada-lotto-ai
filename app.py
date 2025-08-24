@@ -220,6 +220,10 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
 # File Upload & Controls
 # ======================
 
+# ======================
+# File Upload & Controls
+# ======================
+
 uploaded_file = st.file_uploader(
     "📂 Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -241,18 +245,18 @@ try:
         st.error("❌ Invalid CSV. Ensure columns NUMBER DRAWN 1–6 exist with values between 1 and 49.")
         st.stop()
 
-    # Build display DataFrame
-    display_df = numbers_df.copy()
+    # Reset index so everything aligns
+    display_df = numbers_df.reset_index(drop=True)
 
     if bonus_series is not None:
-        display_df["BONUS NUMBER"] = bonus_series.astype("Int64")
+        display_df["BONUS NUMBER"] = bonus_series.reset_index(drop=True).astype("Int64")
 
     if dates is not None:
-        display_df["DATE"] = dates.astype(str)
+        display_df["DATE"] = dates.reset_index(drop=True).astype(str)
 
     # Show uploaded data preview
     st.subheader(f"✅ Uploaded Data ({len(raw_df)} draws):")
-    st.dataframe(display_df.reset_index(drop=True))
+    st.dataframe(display_df)
 
 except Exception as e:
     st.error(f"❌ Error reading CSV: {e}")
