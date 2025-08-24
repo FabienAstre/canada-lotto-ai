@@ -660,32 +660,50 @@ if uploaded_file:
         df[date_col] = df[date_col].astype(str).apply(lambda x: re.sub(r"(\d+)(st|nd|rd|th)", r"\1", x))
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
 
+    number_cols = [f"NUMBER DRAWN {i}" for i in range(1,7)]
+
     st.subheader("Historical Draws (last 1200)")
     st.dataframe(df.tail(1200))
 
-  # ======================
-# Statistical Filters
-# ======================
-sums = feature_df['sum_numbers']
-sum_digits = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: sum(int(d) for n in row for d in str(n)), axis=1)
-ranges = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: max(row)-min(row), axis=1)
-min_gaps = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: min([row[i+1]-row[i] for i in range(5)]), axis=1)
-max_gaps = feature_df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(lambda row: max([row[i+1]-row[i] for i in range(5)]), axis=1)
+    # ======================
+    # Feature Engineering for ML
+    # ======================
+    def compute_features(draw):
+        numbers = [int(n) for n in draw[:6]]  # ensure Python int
+        deltas = [numbers[i+1]-numbers[i] for i in range(5)]
+        odd_count = sum([n%2 for n in numbers])
+        even_count = 6 - odd_count
+        total_sum = sum(numbers)
+        return deltas + [odd_count, even_count, total_sum]
 
-filters = {
-    "sum_min": int(sums.min()),
-    "sum_max": int(sums.max()),
-    "digit_sum_min": int(sum_digits.min()),
-    "digit_sum_max": int(sum_digits.max()),
-    "range_min": int(ranges.min()),
-    "range_max": int(ranges.max()),
-    "min_gap_min": int(min_gaps.min()),
-    "min_gap_max": int(min_gaps.max()),
-    "max_gap_min": int(max_gaps.min()),
-    "max_gap_max": int(max_gaps.max())
-}
+    feature_list = df[number_cols].apply(compute_features, axis=1)
+    feature_df = pd.DataFrame(feature_list.tolist(),
+                              columns=[f"delta_{i}" for i in range(1,6)] + ["odd_count","even_count","sum_numbers"])
 
-st.write("📊 Statistical Filters", filters)
+    targets = df[number_cols].astype(int)
+
+    # ======================
+    # Statistical Filters
+    # ======================
+    sums = feature_df['sum_numbers']
+    sum_digits = df[number_cols].apply(lambda row: sum(int(d) for n in row for d in str(n)), axis=1)
+    ranges = df[number_cols].apply(lambda row: max(row)-min(row), axis=1)
+    min_gaps = df[number_cols].apply(lambda row: min([row[i+1]-row[i] for i in range(5)]), axis=1)
+    max_gaps = df[number_cols].apply(lambda row: max([row[i+1]-row[i] for i in range(5)]), axis=1)
+
+    filters = {
+        "sum_min": int(sums.min()),
+        "sum_max": int(sums.max()),
+        "digit_sum_min": int(sum_digits.min()),
+        "digit_sum_max": int(sum_digits.max()),
+        "range_min": int(ranges.min()),
+        "range_max": int(ranges.max()),
+        "min_gap_min": int(min_gaps.min()),
+        "min_gap_max": int(min_gaps.max()),
+        "max_gap_min": int(max_gaps.min()),
+        "max_gap_max": int(max_gaps.max())
+    }
+
     st.subheader("Statistical Ranges Based on History")
     st.json(filters)
 
@@ -712,24 +730,11 @@ st.write("📊 Statistical Filters", filters)
         st.write(f"🎟 Ticket {i}: {t}")
 
     # ======================
-    # Feature Engineering for ML
-    # ======================
-    def compute_features(draw):
-        numbers = [int(n) for n in draw[:6]]  # ensure Python int
-        deltas = [numbers[i+1]-numbers[i] for i in range(5)]
-        odd_count = sum([n%2 for n in numbers])
-        even_count = 6 - odd_count
-        total_sum = sum(numbers)
-        return deltas + [odd_count, even_count, total_sum]
-
-    feature_list = df[number_cols].apply(compute_features, axis=1)
-    feature_df = pd.DataFrame(feature_list.tolist(), columns=[f"delta_{i}" for i in range(1,6)] + ["odd_count","even_count","sum_numbers"])
-
-    targets = df[number_cols].astype(int)
-
-    # ======================
     # ML Model Training
     # ======================
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.multioutput import MultiOutputClassifier
+
     model = MultiOutputClassifier(RandomForestClassifier(n_estimators=200, random_state=42))
     model.fit(feature_df, targets)
     st.success("✅ ML Model trained on historical draws.")
