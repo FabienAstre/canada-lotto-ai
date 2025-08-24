@@ -221,7 +221,7 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
 # ======================
 
 uploaded_file = st.file_uploader(
-    "Upload a Lotto 6/49 CSV file",
+    "📂 Upload a Lotto 6/49 CSV file",
     type=["csv"],
     help="CSV must include columns NUMBER DRAWN 1–6. Optional: BONUS NUMBER, DATE.",
 )
@@ -231,11 +231,29 @@ if not uploaded_file:
     st.stop()
 
 try:
+    # Read uploaded CSV
     raw_df = pd.read_csv(uploaded_file)
+
+    # Extract numbers, bonus, and dates
     numbers_df, bonus_series, dates = extract_numbers_and_bonus(raw_df)
+
     if numbers_df is None:
-        st.error("Invalid CSV. Ensure columns NUMBER DRAWN 1–6 exist and values are 1–49.")
+        st.error("❌ Invalid CSV. Ensure columns NUMBER DRAWN 1–6 exist with values between 1 and 49.")
         st.stop()
+
+    # Build display DataFrame
+    display_df = numbers_df.copy()
+
+    if bonus_series is not None:
+        display_df["BONUS NUMBER"] = bonus_series.astype("Int64")
+
+    if dates is not None:
+        display_df["DATE"] = dates.astype(str)
+
+    # Show uploaded data preview
+    st.subheader(f"✅ Uploaded Data ({len(raw_df)} draws):")
+    st.dataframe(display_df.reset_index(drop=True))
+
 except Exception as e:
     st.error(f"❌ Error reading CSV: {e}")
     st.stop()
