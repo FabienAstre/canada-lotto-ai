@@ -660,11 +660,59 @@ if uploaded_file:
         df[date_col] = df[date_col].astype(str).apply(lambda x: re.sub(r"(\d+)(st|nd|rd|th)", r"\1", x))
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    st.subheader("Historical Draws")
+    st.subheader("Historical Draws (last 1200)")
     st.dataframe(df.tail(1200))
 
     # ======================
-    # Feature Engineering
+    # Statistical Filters
+    # ======================
+    number_cols = [f"NUMBER DRAWN {i}" for i in range(1,7)]
+    sums = df[number_cols].sum(axis=1)
+    sum_digits = df[number_cols].apply(lambda row: sum(int(d) for n in row for d in str(n)), axis=1)
+    ranges = df[number_cols].max(axis=1) - df[number_cols].min(axis=1)
+    min_gaps = df[number_cols].apply(lambda row: min([row[i+1]-row[i] for i in range(5)]), axis=1)
+    max_gaps = df[number_cols].apply(lambda row: max([row[i+1]-row[i] for i in range(5)]), axis=1)
+
+    filters = {
+        "sum_min": sums.min(),
+        "sum_max": sums.max(),
+        "digit_sum_min": sum_digits.min(),
+        "digit_sum_max": sum_digits.max(),
+        "range_min": ranges.min(),
+        "range_max": ranges.max(),
+        "min_gap_min": min_gaps.min(),
+        "min_gap_max": min_gaps.max(),
+        "max_gap_min": max_gaps.min(),
+        "max_gap_max": max_gaps.max()
+    }
+
+    st.subheader("Statistical Ranges Based on History")
+    st.json(filters)
+
+    def generate_filtered_ticket():
+        while True:
+            ticket = sorted(random.sample(range(1,50), 6))
+            s = sum(ticket)
+            ds = sum(int(d) for n in ticket for d in str(n))
+            r = max(ticket)-min(ticket)
+            gaps = [ticket[i+1]-ticket[i] for i in range(5)]
+            min_gap = min(gaps)
+            max_gap = max(gaps)
+
+            if (filters["sum_min"] <= s <= filters["sum_max"] and
+                filters["digit_sum_min"] <= ds <= filters["digit_sum_max"] and
+                filters["range_min"] <= r <= filters["range_max"] and
+                filters["min_gap_min"] <= min_gap <= filters["min_gap_max"] and
+                filters["max_gap_min"] <= max_gap <= filters["max_gap_max"]):
+                return ticket
+
+    st.subheader("Realistic Filtered Ticket Suggestions")
+    filtered_tickets = [generate_filtered_ticket() for _ in range(5)]
+    for i, t in enumerate(filtered_tickets, 1):
+        st.write(f"🎟 Ticket {i}: {t}")
+
+    # ======================
+    # Feature Engineering for ML
     # ======================
     def compute_features(draw):
         numbers = [int(n) for n in draw[:6]]  # ensure Python int
@@ -674,43 +722,36 @@ if uploaded_file:
         total_sum = sum(numbers)
         return deltas + [odd_count, even_count, total_sum]
 
-    feature_list = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(compute_features, axis=1)
+    feature_list = df[number_cols].apply(compute_features, axis=1)
     feature_df = pd.DataFrame(feature_list.tolist(), columns=[f"delta_{i}" for i in range(1,6)] + ["odd_count","even_count","sum_numbers"])
 
-    # Targets: 6 numbers positions as multi-output
-    targets = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].astype(int)
+    targets = df[number_cols].astype(int)
 
     # ======================
-    # Model Training
+    # ML Model Training
     # ======================
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.multioutput import MultiOutputClassifier
-
     model = MultiOutputClassifier(RandomForestClassifier(n_estimators=200, random_state=42))
     model.fit(feature_df, targets)
     st.success("✅ ML Model trained on historical draws.")
 
     # ======================
-    # Prediction for Next Draw
+    # ML Prediction
     # ======================
     st.subheader("ML-Based Ticket Suggestions")
-
-    last_draw = [int(n) for n in df.iloc[-1][[f"NUMBER DRAWN {i}" for i in range(1,7)]]]
+    last_draw = [int(n) for n in df.iloc[-1][number_cols]]
     last_features = np.array(compute_features(last_draw)).reshape(1, -1)
-
     preds = model.predict(last_features)
 
     suggested_tickets = []
     for _ in range(5):
-        ticket = np.clip(preds[0] + np.random.randint(-2,3,6), 1, 49)  # small randomness
-        ticket = sorted(list(set(int(n) for n in ticket)))  # Python int & unique
+        ticket = np.clip(preds[0] + np.random.randint(-2,3,6), 1, 49)
+        ticket = sorted(list(set(int(n) for n in ticket)))
         while len(ticket) < 6:
             n = random.randint(1,49)
             if n not in ticket:
                 ticket.append(n)
         suggested_tickets.append(sorted(ticket))
 
-    # Display tickets
     for i, t in enumerate(suggested_tickets, 1):
         st.write(f"🎟 Ticket {i}: {t}")
 # Notes
