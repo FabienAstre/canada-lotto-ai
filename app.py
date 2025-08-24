@@ -258,9 +258,17 @@ odd_count = None if odd_mode == "Any" else int(odd_mode.split()[0]) if odd_mode.
 # =============
 # Analytics
 # =============
+# Combine numbers, bonus, and dates for display
+display_df = numbers_df.copy()
+
+if bonus_series is not None:
+    display_df["BONUS NUMBER"] = bonus_series.values
+
+if dates is not None:
+    display_df["DATE"] = dates.values
 
 st.subheader(f"📄 Analyzed Draws: {len(numbers_df)} (from uploaded file)")
-st.dataframe(numbers_df)
+st.dataframe(display_df)
 
 # Hot/Cold
 counter = compute_frequencies(numbers_df)
