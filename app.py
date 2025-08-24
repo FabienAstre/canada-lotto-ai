@@ -220,10 +220,6 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
 # File Upload & Controls
 # ======================
 
-# ======================
-# File Upload & Controls
-# ======================
-
 uploaded_file = st.file_uploader(
     "📂 Upload a Lotto 6/49 CSV file",
     type=["csv"],
@@ -248,10 +244,10 @@ try:
     # Reset index so everything aligns
     display_df = numbers_df.reset_index(drop=True)
 
-    if bonus_series is not None:
+    if bonus_series is not None and len(bonus_series) == len(display_df):
         display_df["BONUS NUMBER"] = bonus_series.reset_index(drop=True).astype("Int64")
 
-    if dates is not None:
+    if dates is not None and len(dates) == len(display_df):
         display_df["DATE"] = dates.reset_index(drop=True).astype(str)
 
     # Show uploaded data preview
@@ -261,7 +257,6 @@ try:
 except Exception as e:
     st.error(f"❌ Error reading CSV: {e}")
     st.stop()
-
 # -------------
 # Global sidebar controls
 # -------------
