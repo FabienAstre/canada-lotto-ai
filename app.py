@@ -636,6 +636,68 @@ if user_draw.strip():
 
 else:
     st.info("Enter 6 numbers to check if this combination has appeared in history.")
+
+# ======================
+# Load Data
+# ======================
+uploaded_file = st.file_uploader("Upload your CSV (Draw Date, NUMBER DRAWN 1-6, Bonus)", type=["csv"])
+if uploaded_file:
+    df = pd.read_csv(uploaded_file, parse_dates=['Draw Date'])
+    
+    st.subheader("Historical Draws")
+    st.dataframe(df.tail(10))
+    
+    # ======================
+    # Feature Engineering
+    # ======================
+    def compute_features(draw):
+        numbers = draw[:6]
+        deltas = [numbers[i+1]-numbers[i] for i in range(5)]
+        odd_count = sum([n%2 for n in numbers])
+        even_count = 6 - odd_count
+        total_sum = sum(numbers)
+        return deltas + [odd_count, even_count, total_sum]
+    
+    feature_list = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(compute_features, axis=1)
+    feature_df = pd.DataFrame(feature_list.tolist(), columns=[f"delta_{i}" for i in range(1,6)] + ["odd_count","even_count","sum_numbers"])
+    
+    # Targets: 6 numbers positions as multi-output
+    targets = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]]
+    
+    # ======================
+    # Model Training
+    # ======================
+    model = MultiOutputClassifier(RandomForestClassifier(n_estimators=200, random_state=42))
+    model.fit(feature_df, targets)
+    
+    st.success("✅ ML Model trained on historical draws.")
+    
+    # ======================
+    # Prediction for Next Draw
+    # ======================
+    st.subheader("ML-Based Ticket Suggestions")
+    
+    # Use last draw as input
+    last_draw = df.iloc[-1][[f"NUMBER DRAWN {i}" for i in range(1,7)]]
+    last_features = np.array(compute_features(last_draw)).reshape(1, -1)
+    
+    # Predict 10 sets of next possible numbers
+    preds = model.predict(last_features)
+    
+    suggested_tickets = []
+    for _ in range(5):
+        # pick 6 numbers from predicted set or nearby high-probability numbers
+        ticket = np.clip(preds[0] + np.random.randint(-2,3,6), 1, 49)  # add small randomness
+        ticket = sorted(list(set(ticket)))  # unique and sorted
+        while len(ticket) < 6:  # ensure 6 numbers
+            n = random.randint(1,49)
+            if n not in ticket:
+                ticket.append(n)
+        suggested_tickets.append(sorted(ticket))
+    
+    # Display tickets
+    for i, t in enumerate(suggested_tickets):
+        st.write(f"🎟 Ticket {i+1}: {t}")
 # ======================
 # Notes
 # ======================
