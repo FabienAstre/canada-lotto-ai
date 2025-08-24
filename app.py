@@ -229,35 +229,21 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
 # File Upload & Controls
 # ======================
 
-uploaded_file = st.file_uploader(
-    "📂 Upload a Lotto 6/49 CSV file",
-    type=["csv"],
-    help="CSV must include columns NUMBER DRAWN 1–6. Optional: BONUS NUMBER, DATE.",
-)
+uploaded_file = st.file_uploader("Upload your CSV (Draw Date, NUMBER DRAWN 1-6, Bonus)", type=["csv"])
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
 
-if not uploaded_file:
-    st.info("Please upload a CSV file with Lotto 6/49 draw results.")
-    st.stop()
+    # Clean/parse Draw Date column if exists
+    date_col = next((c for c in df.columns if c.lower().replace("_","") in ["drawdate","date"]), None)
+    if date_col:
+        import re
+        df[date_col] = df[date_col].astype(str).apply(lambda x: re.sub(r"(\d+)(st|nd|rd|th)", r"\1", x))
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-try:
-    # Read uploaded CSV
-    raw_df = pd.read_csv(uploaded_file)
+    number_cols = [f"NUMBER DRAWN {i}" for i in range(1,7)]
 
-    # Extract numbers, bonus, and dates
-    numbers_df, bonus_series, dates = extract_numbers_and_bonus(raw_df)
-
-    if numbers_df is None:
-        st.error("❌ Invalid CSV. Ensure columns NUMBER DRAWN 1–6 exist with values between 1 and 49.")
-        st.stop()
-
-    # Reset index so everything aligns
-    display_df = numbers_df.reset_index(drop=True)
-
-    if bonus_series is not None and len(bonus_series) == len(display_df):
-        display_df["BONUS NUMBER"] = bonus_series.reset_index(drop=True).astype("Int64")
-
-    if dates is not None and len(dates) == len(display_df):
-        display_df["DATE"] = dates.reset_index(drop=True).astype(str)
+    st.subheader("Historical Draws (last 1200)")
+    st.dataframe(df.tail(1200))
 
     # Show uploaded data preview
     st.subheader(f"✅ Uploaded Data ({len(raw_df)} draws):")
