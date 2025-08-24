@@ -62,14 +62,14 @@ def compute_frequencies(numbers_df: pd.DataFrame):
 def compute_pair_frequencies(numbers_df: pd.DataFrame, limit: int = 500):
     counts = Counter()
     for _, row in numbers_df.tail(limit).iterrows():
-        counts.update(combinations(sorted(row.values), 2))
+        counts.update(combinations(sorted(int(n) for n in row.values), 2))
     return counts
 
 @st.cache_data
 def compute_triplet_frequencies(numbers_df: pd.DataFrame, limit: int = 500):
     counts = Counter()
     for _, row in numbers_df.tail(limit).iterrows():
-        counts.update(combinations(sorted(row.values), 3))
+        counts.update(combinations(sorted(int(n) for n in row.values), 3))
     return counts
 
 def compute_number_gaps(numbers_df: pd.DataFrame, dates: pd.Series | None = None):
@@ -177,3 +177,31 @@ def generate_repeat_ticket(last_draw: set[int], excluded: set[int], repeat_count
     pool = [n for n in range(1, 50) if n not in set(chosen_repeats) | excluded]
     rest = random.sample(pool, 6 - len(chosen_repeats))
     return sorted(chosen_repeats + rest)
+
+# ----------------
+# Ticket Generation with Constraints
+# ----------------
+
+def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min, spread_max, odd_count, max_tries: int = 200):
+    last_ticket = None
+    for _ in range(max_tries):
+        t = gen_callable()
+        last_ticket = t
+        if passes_constraints(t, sum_min, sum_max, spread_min, spread_max, odd_count):
+            return t
+    return last_ticket
+
+# ----------------
+# Simulation
+# ----------------
+
+def simulate_strategy(strategy_func, numbers_df: pd.DataFrame, n: int = 1000):
+    past_draws = [set(row) for row in numbers_df.values.tolist()]
+    results = {3: 0, 4: 0, 5: 0, 6: 0}
+    for _ in range(n):
+        ticket = set(strategy_func())
+        for draw in past_draws:
+            hits = len(ticket.intersection(draw))
+            if hits >= 3:
+                results[hits] += 1
+    return results
