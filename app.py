@@ -28,14 +28,16 @@ def extract_numbers_and_bonus(df: pd.DataFrame):
     if not all(col in df.columns for col in main_cols):
         return None, None, None
 
+    # Main numbers
     numbers_df = df[main_cols].apply(pd.to_numeric, errors="coerce").dropna()
     if not numbers_df.applymap(lambda x: 1 <= x <= 49).all().all():
         return None, None, None
 
+    # Bonus number (keep all rows; allow NaN)
     bonus_series = None
     if bonus_col in df.columns:
-    bonus_series = pd.to_numeric(df[bonus_col], errors="coerce")  # keep all rows
-    bonus_series = bonus_series.where(bonus_series.between(1, 49))  # invalid numbers become NaN
+        bonus_series = pd.to_numeric(df[bonus_col], errors="coerce")
+        bonus_series = bonus_series.where(bonus_series.between(1, 49))  # invalid numbers become NaN
 
     # Flexible date parsing
     date_col = next((col for col in ["DATE", "Draw Date", "Draw_Date", "Date"] if col in df.columns), None)
@@ -46,7 +48,7 @@ def extract_numbers_and_bonus(df: pd.DataFrame):
         tmp = pd.to_datetime(tmp, errors="coerce")
         dates = tmp
 
-    return numbers_df.astype(int), bonus_series.astype(int) if bonus_series is not None else None, dates
+    return numbers_df.astype(int), bonus_series, dates  # return bonus_series as-is
 
 @st.cache_data
 def compute_frequencies(numbers_df: pd.DataFrame):
