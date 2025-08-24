@@ -113,13 +113,6 @@ def generate_balanced_ticket():
 
 # Delta System
 @st.cache_data
-def compute_delta_distribution(numbers_df: pd.DataFrame):
-    deltas = []
-    for row in numbers_df.values:
-        row = sorted(row)
-        deltas.extend([row[i + 1] - row[i] for i in range(5)])
-    return Counter(deltas)
-    
 def generate_delta_tickets(draws, n_tickets=6):
     tickets = []
     deltas = []
