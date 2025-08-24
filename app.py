@@ -673,17 +673,17 @@ if uploaded_file:
     min_gaps = df[number_cols].apply(lambda row: min([row[i+1]-row[i] for i in range(5)]), axis=1)
     max_gaps = df[number_cols].apply(lambda row: max([row[i+1]-row[i] for i in range(5)]), axis=1)
 
-   {
-  "sum_min": 57,
-  "sum_max": 250,
-  "digit_sum_min": 19,
-  "digit_sum_max": 61,
-  "range_min": 12,
-  "range_max": 48,
-  "min_gap_min": 1,
-  "min_gap_max": 8,
-  "max_gap_min": 4,
-  "max_gap_max": 35
+ filters = {
+    "sum_min": int(sums.min()),
+    "sum_max": int(sums.max()),
+    "digit_sum_min": int(sum_digits.min()),
+    "digit_sum_max": int(sum_digits.max()),
+    "range_min": int(ranges.min()),
+    "range_max": int(ranges.max()),
+    "min_gap_min": int(min_gaps.min()),
+    "min_gap_max": int(min_gaps.max()),
+    "max_gap_min": int(max_gaps.min()),
+    "max_gap_max": int(max_gaps.max())
 }
 
     st.subheader("Statistical Ranges Based on History")
