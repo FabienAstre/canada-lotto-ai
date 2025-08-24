@@ -260,12 +260,19 @@ odd_count = None if odd_mode == "Any" else int(odd_mode.split()[0]) if odd_mode.
 # =============
 # Analytics
 # =============
-# Combine numbers, bonus, and dates for display
-display_df = numbers_df.copy()
+# Combine numbers, bonus, and dates for display in the desired format
+display_df = numbers_df.copy().astype(int)
+
+# Add bonus as the last row
 if bonus_series is not None:
-    display_df["BONUS NUMBER"] = bonus_series.astype("Int64").values
+    display_df.loc["BONUS NUMBER"] = bonus_series.astype("Int64").values
+
+# Add date as the first row
 if dates is not None:
-    display_df["DATE"] = dates.values
+    display_df.loc["DATE"] = dates.dt.strftime("%B %d, %Y").values
+
+# Transpose so that rows are Date / Numbers / Bonus, columns are draws
+display_df = display_df.T  # Now each column is a draw
 
 st.subheader(f"📄 Analyzed Draws: {len(numbers_df)} (from uploaded file)")
 st.dataframe(display_df)
