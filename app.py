@@ -229,6 +229,12 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
 # File Upload & Global Controls
 # ======================
 
+# Initialize variables to avoid NameError later
+numbers_df = pd.DataFrame(columns=[f"NUMBER DRAWN {i}" for i in range(1, 7)])
+display_df = numbers_df.copy()
+bonus_series = None
+dates = None
+
 # File upload
 uploaded_file = st.file_uploader(
     "📂 Upload your CSV (Draw Date, NUMBER DRAWN 1-6, Bonus)", 
@@ -246,16 +252,28 @@ if uploaded_file:
             lambda x: re.sub(r"(\d+)(st|nd|rd|th)", r"\1", x)
         )
         raw_df[date_col] = pd.to_datetime(raw_df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
+        dates = raw_df[date_col]
 
     number_cols = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
+    numbers_df = raw_df[number_cols].copy()
+
+    # Extract bonus if exists
+    if "BONUS" in raw_df.columns or "BONUS NUMBER" in raw_df.columns:
+        bonus_col = "BONUS NUMBER" if "BONUS NUMBER" in raw_df.columns else "BONUS"
+        bonus_series = raw_df[bonus_col]
 
     # Display last 1200 historical draws
     st.subheader("Historical Draws (last 1200)")
     st.dataframe(raw_df.tail(1200))
 
     # Preview cleaned uploaded data
+    display_df = numbers_df.copy()
+    if bonus_series is not None:
+        display_df["BONUS NUMBER"] = bonus_series.reset_index(drop=True).astype("Int64")
+    if dates is not None:
+        display_df["DATE"] = dates.reset_index(drop=True).astype(str)
+
     st.subheader(f"✅ Uploaded Data ({len(raw_df)} draws):")
-    display_df = raw_df.copy()
     st.dataframe(display_df)
 
 # -----------------
@@ -263,24 +281,17 @@ if uploaded_file:
 # -----------------
 st.sidebar.header("⚙️ Global Controls")
 
-# Ensure numbers_df exists
-if "numbers_df" not in locals() or numbers_df is None:
-    numbers_df = pd.DataFrame(columns=[f"NUMBER DRAWN {i}" for i in range(1, 7)])
-
 # Determine slider range safely
 max_draws = len(numbers_df)
-safe_min = min(10, max_draws) if max_draws > 0 else 1
-safe_max = max(max_draws, 10)
-
 draw_limit = st.sidebar.slider(
     "Number of past draws to analyze",
-    min_value=safe_min,
-    max_value=safe_max,
-    value=safe_max
+    min_value=1,
+    max_value=max(max_draws, 10),
+    value=max(max_draws, 10)
 )
 
-if max_draws > 0:
-    numbers_df = numbers_df.tail(draw_limit).reset_index(drop=True)
+# Slice numbers_df safely
+numbers_df = numbers_df.tail(draw_limit).reset_index(drop=True)
 
 # Ticket generation settings
 num_tickets = st.sidebar.slider("Tickets to generate (per tab)", 1, 12, 6)
