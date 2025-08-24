@@ -119,20 +119,31 @@ def compute_delta_distribution(numbers_df: pd.DataFrame):
         row = sorted(row)
         deltas.extend([row[i + 1] - row[i] for i in range(5)])
     return Counter(deltas)
+    
+def generate_delta_tickets(draws, n_tickets=6):
+    tickets = []
+    deltas = []
 
-def generate_delta_ticket(delta_counter: Counter):
-    # Use top K deltas to assemble a sequence
-    top_deltas = [d for d, _ in delta_counter.most_common(10)] or [1, 2, 3, 4, 5]
-    for _ in range(200):
-        start = random.randint(1, 20)
+    # Collect deltas from historical draws
+    for draw in draws:
+        sorted_draw = sorted(draw)
+        deltas.extend(np.diff(sorted_draw))
+
+    # Find common deltas
+    common_deltas = [d for d, _ in Counter(deltas).most_common(10)]
+
+    for _ in range(n_tickets):
+        start = random.randint(1, 10)
         seq = [start]
         for _ in range(5):
-            d = random.choice(top_deltas)
-            seq.append(seq[-1] + d)
-        seq = [n for n in seq if 1 <= n <= 49]
-        if len(seq) == 6:
-            return sorted(seq)
-    return sorted(random.sample(range(1, 50), 6))
+            delta = random.choice(common_deltas)
+            next_num = seq[-1] + delta
+            if next_num <= 49:
+                seq.append(next_num)
+        seq = sorted(set(seq))[:6]
+        tickets.append([int(x) for x in seq])  # ✅ convert np.int64 → int
+
+    return tickets
 
 # Zone Coverage
 
