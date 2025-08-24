@@ -226,46 +226,77 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
     return last_ticket
 
 # ======================
-# File Upload & Controls
+# File Upload & Global Controls
 # ======================
 
-uploaded_file = st.file_uploader("Upload your CSV (Draw Date, NUMBER DRAWN 1-6, Bonus)", type=["csv"])
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+# File upload
+uploaded_file = st.file_uploader(
+    "📂 Upload your CSV (Draw Date, NUMBER DRAWN 1-6, Bonus)", 
+    type=["csv"]
+)
 
-    # Clean/parse Draw Date column if exists
-    date_col = next((c for c in df.columns if c.lower().replace("_","") in ["drawdate","date"]), None)
+if uploaded_file:
+    raw_df = pd.read_csv(uploaded_file)
+
+    # Parse Draw Date column if present
+    date_col = next((c for c in raw_df.columns if c.lower().replace("_", "") in ["drawdate", "date"]), None)
     if date_col:
         import re
-        df[date_col] = df[date_col].astype(str).apply(lambda x: re.sub(r"(\d+)(st|nd|rd|th)", r"\1", x))
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
+        raw_df[date_col] = raw_df[date_col].astype(str).apply(
+            lambda x: re.sub(r"(\d+)(st|nd|rd|th)", r"\1", x)
+        )
+        raw_df[date_col] = pd.to_datetime(raw_df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    number_cols = [f"NUMBER DRAWN {i}" for i in range(1,7)]
+    number_cols = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
 
+    # Display last 1200 historical draws
     st.subheader("Historical Draws (last 1200)")
-    st.dataframe(df.tail(1200))
+    st.dataframe(raw_df.tail(1200))
 
-    # Show uploaded data preview
+    # Preview cleaned uploaded data
     st.subheader(f"✅ Uploaded Data ({len(raw_df)} draws):")
+    display_df = raw_df.copy()
     st.dataframe(display_df)
 
-# -------------
-# Global sidebar controls
-# -------------
+# -----------------
+# Sidebar Controls
+# -----------------
 st.sidebar.header("⚙️ Global Controls")
+
+# Draws selection
 max_draws = len(numbers_df)
-draw_limit = st.sidebar.slider("Number of past draws to analyze", min_value=10, max_value=max_draws, value=max_draws)
+draw_limit = st.sidebar.slider(
+    "Number of past draws to analyze", 
+    min_value=10, max_value=max_draws, value=max_draws
+)
 numbers_df = numbers_df.tail(draw_limit).reset_index(drop=True)
 
+# Ticket generation settings
 num_tickets = st.sidebar.slider("Tickets to generate (per tab)", 1, 12, 6)
-excluded_str = st.sidebar.text_input("Exclude numbers (comma-separated)", "")
-excluded = {int(x.strip()) for x in excluded_str.split(",") if x.strip().isdigit() and 1 <= int(x.strip()) <= 49}
 
+# Excluded numbers
+excluded_str = st.sidebar.text_input("Exclude numbers (comma-separated)", "")
+excluded = {
+    int(x.strip()) 
+    for x in excluded_str.split(",") 
+    if x.strip().isdigit() and 1 <= int(x.strip()) <= 49
+}
+
+# Sum & spread ranges
 sum_min, sum_max = st.sidebar.slider("Sum range", 60, 250, (100, 180))
 spread_min, spread_max = st.sidebar.slider("Spread range (max - min)", 5, 48, (10, 40))
-odd_mode = st.sidebar.selectbox("Odd/Even constraint", ["Any", "Exactly 0 odd", "1", "2", "3", "4", "5", "6"])  # string for nicer label
-odd_count = None if odd_mode == "Any" else int(odd_mode.split()[0]) if odd_mode.startswith("Exactly") else int(odd_mode)
 
+# Odd/even constraint
+odd_mode = st.sidebar.selectbox(
+    "Odd/Even constraint", 
+    ["Any", "Exactly 0 odd", "1", "2", "3", "4", "5", "6"]
+)
+if odd_mode == "Any":
+    odd_count = None
+elif odd_mode.startswith("Exactly"):
+    odd_count = int(odd_mode.split()[1])
+else:
+    odd_count = int(odd_mode)
 # =============
 # Analytics
 # =============
