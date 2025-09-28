@@ -160,3 +160,54 @@ if uploaded_file:
             st.plotly_chart(fig_pred, use_container_width=True)
         else:
             st.info("Not enough historical draws for ML prediction. Upload more data.")
+            # ---------------------------
+    # Tab 6: Strategy Tools
+    # ---------------------------
+    tab6 = st.tabs(["🎯 Strategy Tools"])[0]
+
+    with tab6:
+        st.subheader("🎯 Strategy Tools")
+
+        # Cluster / Zone Coverage
+        st.markdown("### 📌 Cluster / Zone Coverage")
+        zones = [(1,10),(11,20),(21,30),(31,40),(41,49)]
+        zone_counts = {f"{a}-{b}":0 for a,b in zones}
+        for draw in df[number_cols].values:
+            for num in draw:
+                for a,b in zones:
+                    if a <= num <= b:
+                        zone_counts[f"{a}-{b}"] += 1
+                        break
+        st.bar_chart(pd.Series(zone_counts))
+
+        # Delta System
+        st.markdown("### 🔀 Delta System")
+        deltas_input = st.text_input("Enter deltas (comma separated)", "5,8,7,3,12,14")
+        try:
+            deltas = list(map(int, deltas_input.split(",")))
+            numbers = []
+            total = 0
+            for d in deltas:
+                total += d
+                if total <= 49:
+                    numbers.append(total)
+            st.write("Generated numbers:", numbers)
+        except:
+            st.warning("Invalid delta input")
+
+        # Sum & Spread Filters
+        st.markdown("### ➕ Sum & Spread Filters")
+        num_pick = sorted(random.sample(range(1,50),6))
+        total_sum = sum(num_pick)
+        spread = max(num_pick) - min(num_pick)
+
+        st.write("Random pick:", num_pick)
+        st.write("Sum:", total_sum, " Spread:", spread)
+
+        min_sum, max_sum = st.slider("Acceptable sum range", 50, 300, (100,180))
+        min_spread, max_spread = st.slider("Acceptable spread range", 1, 48, (15,35))
+
+        if min_sum <= total_sum <= max_sum and min_spread <= spread <= max_spread:
+            st.success("✅ This pick meets your filters!")
+        else:
+            st.error("❌ This pick does not meet your filters.")
