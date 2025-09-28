@@ -225,18 +225,19 @@ try:
         dates = dates[:min_len].reset_index(drop=True)
     
     # Combine into display DataFrame
-    display_df = numbers_df.reset_index(drop=True)
+    display_df = numbers_df.copy().reset_index(drop=True)
     if bonus_series is not None:
         display_df["BONUS NUMBER"] = bonus_series.astype("Int64")
     if dates is not None:
         display_df["DATE"] = dates.astype(str)
     
-    # Sort by date if available
+    # Sort by date if available (ignore index to avoid misalignment)
     if "DATE" in display_df.columns:
-        display_df = display_df.sort_values("DATE").reset_index(drop=True)
-        numbers_df = numbers_df.loc[display_df.index].reset_index(drop=True)
+        display_df = display_df.sort_values("DATE", ignore_index=True)
+        # Update numbers_df and bonus_series to match display_df order
+        numbers_df = display_df[numbers_df.columns]
         if bonus_series is not None:
-            bonus_series = bonus_series.loc[display_df.index].reset_index(drop=True)
+            bonus_series = display_df["BONUS NUMBER"]
     
     st.subheader(f"✅ Uploaded Data ({len(display_df)} draws)")
     st.dataframe(display_df)
