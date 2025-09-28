@@ -215,10 +215,16 @@ except Exception as e:
     st.stop()
 
 display_df = numbers_df.copy()
+
+# Align bonus_series with numbers_df
 if bonus_series is not None:
-    display_df["BONUS NUMBER"] = bonus_series.astype("Int64").values
+    bonus_series_aligned = bonus_series.tail(len(numbers_df)).reset_index(drop=True)
+    display_df["BONUS NUMBER"] = bonus_series_aligned.astype("Int64")
+
+# Align dates with numbers_df
 if dates is not None:
-    display_df["DATE"] = dates.values
+    dates_aligned = dates.tail(len(numbers_df)).reset_index(drop=True)
+    display_df["DATE"] = dates_aligned
 
 st.subheader(f"✅ Uploaded Data ({len(numbers_df)} draws):")
 st.dataframe(display_df)
