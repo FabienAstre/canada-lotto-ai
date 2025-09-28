@@ -266,4 +266,6 @@ with tabs[6]:
             if n not in ticket: ticket.append(n)
         tickets.append(sorted(ticket))
     for i,t in enumerate(tickets,1):
-        st.write(f
+        st.write(f"Ticket {i}: {t}")
+
+st.success("All tabs loaded successfully! ✅")
