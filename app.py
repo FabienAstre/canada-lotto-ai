@@ -194,7 +194,7 @@ def try_generate_with_constraints(gen_callable, *, sum_min, sum_max, spread_min,
     return last_ticket
 
 # ======================
-# CSV Upload
+# CSV Upload & Cleaning
 # ======================
 uploaded_file = st.file_uploader(
     "📂 Upload a Lotto 6/49 CSV file",
@@ -207,29 +207,43 @@ if not uploaded_file:
     st.stop()
 
 try:
+    # Read CSV
     raw_df = pd.read_csv(uploaded_file)
+    
+    # Extract numbers, bonus, dates
     numbers_df, bonus_series, dates = extract_numbers_and_bonus(raw_df)
+    
     if numbers_df is None:
         st.error("❌ Invalid CSV. Ensure columns NUMBER DRAWN 1–6 exist with values between 1 and 49.")
         st.stop()
-
-    display_df = numbers_df.copy()
+    
+    # Align lengths in case of missing rows
+    min_len = len(numbers_df)
     if bonus_series is not None:
-        display_df["BONUS NUMBER"] = bonus_series.astype("Int64").values
+        bonus_series = bonus_series[:min_len].reset_index(drop=True)
     if dates is not None:
-        display_df["DATE"] = dates.values
-
+        dates = dates[:min_len].reset_index(drop=True)
+    
+    # Combine into display DataFrame
+    display_df = numbers_df.reset_index(drop=True)
+    if bonus_series is not None:
+        display_df["BONUS NUMBER"] = bonus_series.astype("Int64")
+    if dates is not None:
+        display_df["DATE"] = dates.astype(str)
+    
     # Sort by date if available
     if "DATE" in display_df.columns:
         display_df = display_df.sort_values("DATE").reset_index(drop=True)
-
+        numbers_df = numbers_df.loc[display_df.index].reset_index(drop=True)
+        if bonus_series is not None:
+            bonus_series = bonus_series.loc[display_df.index].reset_index(drop=True)
+    
     st.subheader(f"✅ Uploaded Data ({len(display_df)} draws)")
     st.dataframe(display_df)
 
 except Exception as e:
     st.error(f"❌ Error reading CSV: {e}")
     st.stop()
-
 # ======================
 # Sidebar Controls
 # ======================
