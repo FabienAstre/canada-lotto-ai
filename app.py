@@ -1,164 +1,101 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import random
 from collections import Counter
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+import numpy as np
 
-st.set_page_config(page_title="Canada Lotto AI", layout="wide")
+st.set_page_config(page_title="🎲 Canada Lotto 6/49", layout="wide")
+st.title("🎲 Canada Lotto 6/49 Analyzer")
 
-# ------------------------
-# Load Data (flexible)
-# ------------------------
+# ===========================
+# 1️⃣ File Upload (top-level)
+# ===========================
+uploaded_file = st.file_uploader("Upload your Lotto 6/49 CSV", type=["csv"])
+
+if not uploaded_file:
+    st.warning("⚠️ Please upload your '649.csv' file to proceed.")
+    st.stop()
+
+# ===========================
+# 2️⃣ Load CSV (cached)
+# ===========================
 @st.cache_data
-def load_data():
-    try:
-        df = pd.read_csv("649.csv")  # local copy
-    except FileNotFoundError:
-        st.warning("⚠️ No local '649.csv' found. Please upload one below.")
-        uploaded = st.file_uploader("Upload your Lotto 6/49 CSV", type=["csv"])
-        if uploaded is not None:
-            df = pd.read_csv(uploaded)
-        else:
-            return pd.DataFrame()
-    df.columns = df.columns.str.strip()
+def load_data(file) -> pd.DataFrame:
+    df = pd.read_csv(file)
+    # Ensure NUMBER DRAWN 1..6 columns exist
+    required_cols = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
+    if not all(c in df.columns for c in required_cols):
+        raise ValueError(f"CSV missing required columns: {required_cols}")
+    # Ensure numbers are integers
+    for col in required_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce').astype(int)
+    # Optional: parse date
     if "DATE" in df.columns:
-        df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
+        df["DATE"] = pd.to_datetime(df["DATE"], errors='coerce')
     return df
 
-df = load_data()
-number_cols = [c for c in df.columns if c.startswith("N")]
+try:
+    df = load_data(uploaded_file)
+    st.success(f"Loaded {len(df)} historical draws.")
+except Exception as e:
+    st.error(f"❌ Error loading CSV: {e}")
+    st.stop()
 
-# ------------------------
-# Helper: Clean numbers safely
-# ------------------------
-def get_all_numbers():
-    if df.empty or not number_cols:
-        return pd.Series([], dtype=int)
-    all_numbers = df[number_cols].values.flatten()
-    all_numbers = pd.to_numeric(all_numbers, errors="coerce")
-    all_numbers = pd.Series(all_numbers).dropna().astype(int)
-    return all_numbers
+st.dataframe(df.tail(10))
 
-# ------------------------
-# Tabs
-# ------------------------
-tabs = st.tabs([
-    "Data Explorer", "Frequency Analysis", "Hot & Cold Numbers",
-    "Simulation", "Machine Learning", "Strategy Tools"
-])
+# ===========================
+# 3️⃣ Frequency Analysis
+# ===========================
+st.header("📊 Number Frequency")
+all_numbers = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].values.flatten()
+counter = Counter(all_numbers)
+freq_df = pd.DataFrame(counter.items(), columns=["Number", "Frequency"]).sort_values(by="Frequency", ascending=False)
+st.dataframe(freq_df)
 
-# ------------------------
-# Tab 1: Data Explorer
-# ------------------------
-with tabs[0]:
-    st.header("📊 Lotto Data Explorer")
-    if df.empty:
-        st.info("Please upload a CSV file to explore data.")
-    else:
-        st.dataframe(df.head(50))
+# ===========================
+# 4️⃣ Delta System (difference between numbers)
+# ===========================
+st.header("Δ Delta System")
+def delta_system(row):
+    numbers = sorted(row)
+    deltas = [j-i for i, j in zip(numbers[:-1], numbers[1:])]
+    return deltas
 
-# ------------------------
-# Tab 2: Frequency Analysis
-# ------------------------
-with tabs[1]:
-    st.header("🔢 Frequency Analysis")
-    all_numbers = get_all_numbers()
-    if all_numbers.empty:
-        st.info("No numbers available for analysis.")
-    else:
-        freq = Counter(all_numbers)
-        freq_df = pd.DataFrame(sorted(freq.items()), columns=["Number", "Frequency"])
-        st.bar_chart(freq_df.set_index("Number"))
-        st.dataframe(freq_df)
+delta_df = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(delta_system, axis=1)
+st.dataframe(delta_df.tail(10))
 
-# ------------------------
-# Tab 3: Hot & Cold Numbers
-# ------------------------
-with tabs[2]:
-    st.header("🔥 Hot & ❄️ Cold Numbers")
-    all_numbers = get_all_numbers()
-    if all_numbers.empty:
-        st.info("No numbers available for analysis.")
-    else:
-        freq = Counter(all_numbers)
-        hot = sorted(freq.items(), key=lambda x: -x[1])[:10]
-        cold = sorted(freq.items(), key=lambda x: x[1])[:10]
-        st.subheader("Top 10 Hot Numbers")
-        st.table(hot)
-        st.subheader("Top 10 Cold Numbers")
-        st.table(cold)
+# ===========================
+# 5️⃣ Cluster / Zone Coverage
+# ===========================
+st.header("📍 Cluster / Zone Coverage")
+# Example zones: 1-10,11-20,21-30,31-40,41-49
+zones = [(1,10),(11,20),(21,30),(31,40),(41,49)]
+def zone_coverage(row):
+    counts = []
+    for start,end in zones:
+        counts.append(sum(start <= n <= end for n in row))
+    return counts
 
-# ------------------------
-# Tab 4: Simulation
-# ------------------------
-with tabs[3]:
-    st.header("🎲 Simulation")
-    if st.button("Generate Random Ticket"):
-        ticket = sorted(random.sample(range(1, 50), 6))
-        st.success(f"Your ticket: {ticket}")
+zone_df = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].apply(zone_coverage, axis=1)
+zone_df.columns = [f"Zone {i}" for i in range(1,6)]
+st.dataframe(zone_df.tail(10))
 
-# ------------------------
-# Tab 5: Machine Learning
-# ------------------------
-with tabs[4]:
-    st.header("🤖 Machine Learning")
-    if df.empty or not number_cols:
-        st.info("Upload data to enable machine learning.")
-    else:
-        X = df[number_cols].dropna().astype(int)
-        y = (X.max(axis=1) % 2 == 0).astype(int)  # dummy target
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# ===========================
+# 6️⃣ Sum & Spread Filters
+# ===========================
+st.header("➗ Sum & Spread Filters")
+sums = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].sum(axis=1)
+spread = df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].max(axis=1) - df[[f"NUMBER DRAWN {i}" for i in range(1,7)]].min(axis=1)
+sum_spread_df = pd.DataFrame({"Sum": sums, "Spread": spread})
+st.dataframe(sum_spread_df.tail(10))
 
-        model = LogisticRegression(max_iter=1000)
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+# ===========================
+# 7️⃣ Prediction Helper (Optional)
+# ===========================
+st.header("🔮 Prediction Helper")
+most_common_numbers = freq_df.head(6)["Number"].tolist()
+st.write(f"Top 6 frequent numbers (historical): {most_common_numbers}")
 
-        st.write(f"Accuracy: {accuracy_score(y_test, preds):.2f}")
-
-# ------------------------
-# Tab 6: Strategy Tools
-# ------------------------
-with tabs[5]:
-    st.header("🛠 Strategy Tools")
-
-    if df.empty or not number_cols:
-        st.info("Upload data to use strategy tools.")
-    else:
-        # Cluster / Zone Coverage
-        st.subheader("Cluster / Zone Coverage")
-        cluster_ranges = [(1,10),(11,20),(21,30),(31,40),(41,49)]
-        last_draw = df[number_cols].iloc[-1].dropna().astype(int).tolist()
-        coverage = {f"{a}-{b}": sum(1 for n in last_draw if a <= n <= b) for a,b in cluster_ranges}
-        st.write("Last draw coverage:", coverage)
-
-        # Delta System
-        st.subheader("Delta System")
-        if st.button("Generate Delta Ticket"):
-            deltas = sorted(random.sample(range(1,10), 6))
-            ticket = [deltas[0]]
-            for d in deltas[1:]:
-                ticket.append(ticket[-1] + d)
-            st.success(f"Delta Ticket: {ticket}")
-
-        # Sum & Spread Filters
-        st.subheader("Sum & Spread Filters")
-        sum_min, sum_max = st.slider("Select sum range", 60, 200, (100,150))
-        spread_max = st.slider("Max spread (difference between highest & lowest)", 10, 40, 25)
-
-        if st.button("Generate Filtered Ticket"):
-            tries = 0
-            found = None
-            while tries < 10000 and found is None:
-                candidate = sorted(random.sample(range(1,50), 6))
-                s = sum(candidate)
-                spread = candidate[-1] - candidate[0]
-                if sum_min <= s <= sum_max and spread <= spread_max:
-                    found = candidate
-                tries += 1
-            if found:
-                st.success(f"Filtered Ticket: {found}")
-            else:
-                st.error("No ticket found with these filters.")
+# ===========================
+# End of App
+# ===========================
+st.success("✅ Lotto 6/49 Analysis Complete!")
