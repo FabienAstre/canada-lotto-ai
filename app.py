@@ -7,7 +7,7 @@ from collections import Counter
 from itertools import combinations
 import random
 import re
-from datetime import datetime
+from datetime import datetime, date
 
 st.set_page_config(page_title="Lotto 6/49 Live Analyzer", page_icon="🎲", layout="wide")
 
@@ -18,7 +18,8 @@ st.caption(
 )
 
 # ──────────────────────────────────────────────
-# DATA SOURCE: lottomaxnumbers.com
+# DATA SOURCE: lottoresult.ca
+# Clean card-based layout, works from Streamlit Cloud
 # ──────────────────────────────────────────────
 
 HEADERS = {
@@ -26,85 +27,298 @@ HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
 }
-BASE_URL = "https://www.lottomaxnumbers.com/lotto-649/numbers/{year}"
+
 NUMBER_COLS = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
 
-
-def parse_year_page(year: int) -> list:
-    url = BASE_URL.format(year=year)
+def parse_lottoresult_page(url: str) -> list:
+    """Parse draw results from lottoresult.ca listing page."""
     try:
         r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
     except Exception as e:
-        st.warning(f"Could not fetch {year}: {e}")
-        return []
+        return [], str(e)
 
     soup = BeautifulSoup(r.text, "lxml")
-    rows = soup.find_all("tr")
+    text = soup.get_text(separator="\n")
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    draws = []
+    i = 0
+    while i < len(lines):
+        # Match "Lotto 6/49" followed by date on next lines
+        if "Lotto 6/49" in lines[i]:
+            # Look ahead for a date
+            draw_date = None
+            nums = []
+            bonus = None
+            for j in range(i, min(i + 8, len(lines))):
+                # Try date patterns: "Sat, Apr 18, 2026" or "Apr 18, 2026"
+                dm = re.search(
+                    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+(\d{1,2})[,\s]+(\d{4})",
+                    lines[j], re.IGNORECASE
+                )
+                if dm and draw_date is None:
+                    try:
+                        draw_date = datetime.strptime(
+                            f"{dm.group(1)} {dm.group(2)} {dm.group(3)}", "%b %d %Y"
+                        ).date()
+                    except Exception:
+                        pass
+
+                # Look for 6 consecutive numbers 1-49
+                # The page shows numbers as individual chars run together like "2730323537457"
+                # or as separate numbers
+                all_nums_in_line = re.findall(r'\b([1-9]|[1-3][0-9]|4[0-9])\b', lines[j])
+                if len(all_nums_in_line) >= 6 and not nums:
+                    candidates = [int(n) for n in all_nums_in_line if 1 <= int(n) <= 49]
+                    if len(candidates) >= 6:
+                        nums = candidates[:6]
+                        if len(candidates) >= 7:
+                            bonus = candidates[6]
+
+            if draw_date and len(nums) == 6:
+                draws.append({
+                    "DATE": draw_date,
+                    "NUMBER DRAWN 1": nums[0],
+                    "NUMBER DRAWN 2": nums[1],
+                    "NUMBER DRAWN 3": nums[2],
+                    "NUMBER DRAWN 4": nums[3],
+                    "NUMBER DRAWN 5": nums[4],
+                    "NUMBER DRAWN 6": nums[5],
+                    "BONUS": bonus,
+                })
+        i += 1
+
+    return draws, None
+
+
+def parse_lottoresult_structured(url: str) -> tuple:
+    """
+    Parse lottoresult.ca using structured number extraction.
+    The page shows draws as: date line, then 7 numbers (6 main + 1 bonus) concatenated.
+    """
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        return [], str(e)
+
+    soup = BeautifulSoup(r.text, "lxml")
     draws = []
 
-    for row in rows:
-        cells = row.find_all("td")
-        if len(cells) < 2:
-            continue
-        date_text = cells[0].get_text(strip=True)
-        date_match = re.search(
-            r"(January|February|March|April|May|June|July|August|"
-            r"September|October|November|December)\s+(\d+)\s+(\d{4})",
-            date_text, re.IGNORECASE
-        )
+    # Find all draw result links — they follow pattern /games/lotto-649/results/YYYY-MM-DD
+    result_links = soup.find_all("a", href=re.compile(r"/games/lotto-649/results/\d{4}-\d{2}-\d{2}"))
+
+    for link in result_links:
+        href = link.get("href", "")
+        date_match = re.search(r"(\d{4}-\d{2}-\d{2})", href)
         if not date_match:
             continue
         try:
-            draw_date = datetime.strptime(
-                f"{date_match.group(1)} {date_match.group(2)} {date_match.group(3)}",
-                "%B %d %Y"
-            ).date()
+            draw_date = datetime.strptime(date_match.group(1), "%Y-%m-%d").date()
         except Exception:
             continue
 
-        nums_cell = cells[1]
-        li_items = nums_cell.find_all("li")
-        nums = []
-        bonus = None
-        for i, li in enumerate(li_items):
-            txt = li.get_text(strip=True)
-            try:
-                n = int(txt)
-                if 1 <= n <= 49:
-                    if i < 6:
-                        nums.append(n)
-                    elif i == 6:
-                        bonus = n
-            except Exception:
-                continue
+        # Numbers are siblings/children near this link
+        # Walk up to find the card container and extract numbers
+        parent = link.parent
+        for _ in range(5):
+            if parent is None:
+                break
+            text_content = parent.get_text(separator=" ")
+            # Find all 1-49 numbers in this block
+            raw_nums = re.findall(r'\b([1-9]|[1-3][0-9]|4[0-9])\b', text_content)
+            valid = [int(n) for n in raw_nums if 1 <= int(n) <= 49]
+            if len(valid) >= 6:
+                # Remove duplicates while preserving order
+                seen = set()
+                uniq = []
+                for n in valid:
+                    if n not in seen:
+                        seen.add(n)
+                        uniq.append(n)
+                if len(uniq) >= 6:
+                    nums = uniq[:6]
+                    bonus = uniq[6] if len(uniq) >= 7 else None
+                    draws.append({
+                        "DATE": draw_date,
+                        "NUMBER DRAWN 1": nums[0],
+                        "NUMBER DRAWN 2": nums[1],
+                        "NUMBER DRAWN 3": nums[2],
+                        "NUMBER DRAWN 4": nums[3],
+                        "NUMBER DRAWN 5": nums[4],
+                        "NUMBER DRAWN 6": nums[5],
+                        "BONUS": bonus,
+                    })
+                    break
+            parent = parent.parent
 
-        if len(nums) == 6:
-            draws.append({
-                "DATE": draw_date,
-                "NUMBER DRAWN 1": nums[0],
-                "NUMBER DRAWN 2": nums[1],
-                "NUMBER DRAWN 3": nums[2],
-                "NUMBER DRAWN 4": nums[3],
-                "NUMBER DRAWN 5": nums[4],
-                "NUMBER DRAWN 6": nums[5],
-                "BONUS": bonus,
-            })
+    return draws, None
 
-    return draws
+
+def fetch_individual_result(draw_date: date) -> dict | None:
+    """Fetch a single draw result page for precise number extraction."""
+    url = f"https://www.lottoresult.ca/games/lotto-649/results/{draw_date}"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+    except Exception:
+        return None
+
+    soup = BeautifulSoup(r.text, "lxml")
+    text = soup.get_text(separator=" ")
+
+    # Extract all numbers 1-49 from the page, deduplicated
+    raw = re.findall(r'\b([1-9]|[1-3][0-9]|4[0-9])\b', text)
+    valid = [int(n) for n in raw if 1 <= int(n) <= 49]
+
+    seen = set()
+    uniq = []
+    for n in valid:
+        if n not in seen:
+            seen.add(n)
+            uniq.append(n)
+
+    if len(uniq) >= 6:
+        return {
+            "DATE": draw_date,
+            "NUMBER DRAWN 1": uniq[0],
+            "NUMBER DRAWN 2": uniq[1],
+            "NUMBER DRAWN 3": uniq[2],
+            "NUMBER DRAWN 4": uniq[3],
+            "NUMBER DRAWN 5": uniq[4],
+            "NUMBER DRAWN 6": uniq[5],
+            "BONUS": uniq[6] if len(uniq) >= 7 else None,
+        }
+    return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_draws(years: tuple) -> pd.DataFrame:
+def load_draws(n_years: int) -> pd.DataFrame:
+    """
+    Load draws from lottoresult.ca listing page.
+    Primary: parse the main listing page (shows ~50 most recent draws).
+    For more history: fetch year-specific pages.
+    """
     all_draws = []
-    progress = st.progress(0, text="Fetching live draw data...")
-    for i, year in enumerate(years):
-        draws = parse_year_page(year)
-        all_draws.extend(draws)
-        progress.progress((i + 1) / len(years), text=f"Loaded {year} ({len(draws)} draws found)")
+    progress = st.progress(0, text="Fetching live draw data from lottoresult.ca...")
+
+    current_year = datetime.now().year
+    years = list(range(current_year, current_year - n_years, -1))
+
+    for idx, year in enumerate(years):
+        url = f"https://www.lottoresult.ca/games/lotto-649/results/{year}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+
+            # Find all result links for this year
+            result_links = soup.find_all(
+                "a", href=re.compile(rf"/games/lotto-649/results/{year}-\d{{2}}-\d{{2}}")
+            )
+
+            year_draws = []
+            for link in result_links:
+                href = link.get("href", "")
+                dm = re.search(r"(\d{4}-\d{2}-\d{2})", href)
+                if not dm:
+                    continue
+                try:
+                    draw_date = datetime.strptime(dm.group(1), "%Y-%m-%d").date()
+                except Exception:
+                    continue
+
+                # Walk up DOM to find number block
+                parent = link.parent
+                found = False
+                for _ in range(6):
+                    if parent is None:
+                        break
+                    raw = re.findall(r'\b([1-9]|[1-3][0-9]|4[0-9])\b', parent.get_text(separator=" "))
+                    valid = [int(n) for n in raw if 1 <= int(n) <= 49]
+                    seen_set = set()
+                    uniq = []
+                    for n in valid:
+                        if n not in seen_set:
+                            seen_set.add(n)
+                            uniq.append(n)
+                    if len(uniq) >= 6:
+                        year_draws.append({
+                            "DATE": draw_date,
+                            "NUMBER DRAWN 1": uniq[0],
+                            "NUMBER DRAWN 2": uniq[1],
+                            "NUMBER DRAWN 3": uniq[2],
+                            "NUMBER DRAWN 4": uniq[3],
+                            "NUMBER DRAWN 5": uniq[4],
+                            "NUMBER DRAWN 6": uniq[5],
+                            "BONUS": uniq[6] if len(uniq) >= 7 else None,
+                        })
+                        found = True
+                        break
+                    parent = parent.parent
+
+            all_draws.extend(year_draws)
+
+        except Exception as e:
+            st.warning(f"Could not load {year}: {e}")
+
+        progress.progress((idx + 1) / len(years), text=f"Loaded {year}")
+
     progress.empty()
+
+    # Fallback: if nothing parsed, try the main listing page
+    if not all_draws:
+        try:
+            r = requests.get(
+                "https://www.lottoresult.ca/games/lotto-649",
+                headers=HEADERS, timeout=20
+            )
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+            result_links = soup.find_all(
+                "a", href=re.compile(r"/games/lotto-649/results/\d{4}-\d{2}-\d{2}")
+            )
+            for link in result_links:
+                href = link.get("href", "")
+                dm = re.search(r"(\d{4}-\d{2}-\d{2})", href)
+                if not dm:
+                    continue
+                try:
+                    draw_date = datetime.strptime(dm.group(1), "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                parent = link.parent
+                for _ in range(6):
+                    if parent is None:
+                        break
+                    raw = re.findall(r'\b([1-9]|[1-3][0-9]|4[0-9])\b', parent.get_text(separator=" "))
+                    valid = [int(n) for n in raw if 1 <= int(n) <= 49]
+                    seen_set = set()
+                    uniq = []
+                    for n in valid:
+                        if n not in seen_set:
+                            seen_set.add(n)
+                            uniq.append(n)
+                    if len(uniq) >= 6:
+                        all_draws.append({
+                            "DATE": draw_date,
+                            "NUMBER DRAWN 1": uniq[0],
+                            "NUMBER DRAWN 2": uniq[1],
+                            "NUMBER DRAWN 3": uniq[2],
+                            "NUMBER DRAWN 4": uniq[3],
+                            "NUMBER DRAWN 5": uniq[4],
+                            "NUMBER DRAWN 6": uniq[5],
+                            "BONUS": uniq[6] if len(uniq) >= 7 else None,
+                        })
+                        break
+                    parent = parent.parent
+        except Exception:
+            pass
 
     if not all_draws:
         return pd.DataFrame()
@@ -122,7 +336,6 @@ def load_draws(years: tuple) -> pd.DataFrame:
 def frequency_table(df):
     return Counter(df[NUMBER_COLS].values.flatten().tolist())
 
-
 def gap_table(df):
     last_seen = {}
     for idx, row in df.iterrows():
@@ -136,7 +349,6 @@ def gap_table(df):
         rows.append({"Number": n, "Gap": gap})
     return pd.DataFrame(rows).sort_values("Gap", ascending=False).reset_index(drop=True)
 
-
 def pair_freq(df):
     c = Counter()
     for _, row in df.iterrows():
@@ -144,12 +356,9 @@ def pair_freq(df):
     top = c.most_common(25)
     return pd.DataFrame([{"Pair": f"{a} & {b}", "Count": cnt} for (a, b), cnt in top])
 
-
 def decade_breakdown(df):
-    bands = {
-        "1–9": range(1, 10), "10–19": range(10, 20),
-        "20–29": range(20, 30), "30–39": range(30, 40), "40–49": range(40, 50),
-    }
+    bands = {"1–9": range(1,10), "10–19": range(10,20),
+             "20–29": range(20,30), "30–39": range(30,40), "40–49": range(40,50)}
     rows = []
     for label, rng in bands.items():
         s = set(rng)
@@ -157,69 +366,46 @@ def decade_breakdown(df):
         rows.append({"Decade": label, "Total": total, "Avg per draw": round(total / len(df), 2)})
     return pd.DataFrame(rows)
 
-
-# ──────────────────────────────────────────────
-# GENERATOR HELPERS
-# ──────────────────────────────────────────────
-
 def popularity_score(n):
     score = 1.0
-    if n <= 12:
-        score += 0.8
-    elif n <= 31:
-        score += 0.4
-    else:
-        score -= 0.3
-    if n in [3, 7, 11, 13, 17, 21]:
-        score += 0.3
+    if n <= 12:   score += 0.8
+    elif n <= 31: score += 0.4
+    else:         score -= 0.3
+    if n in [3, 7, 11, 13, 17, 21]: score += 0.3
     return round(score, 2)
-
 
 def split_risk(ticket):
     avg = sum(popularity_score(n) for n in ticket) / 6
-    if avg > 1.2:
-        return "🔴 High split risk"
-    if avg > 0.9:
-        return "🟡 Medium split risk"
+    if avg > 1.2: return "🔴 High split risk"
+    if avg > 0.9: return "🟡 Medium split risk"
     return "🟢 Low split risk"
-
 
 def has_consec(t):
     s = sorted(t)
-    return any(s[i + 1] - s[i] == 1 for i in range(5))
-
+    return any(s[i+1]-s[i]==1 for i in range(5))
 
 def is_arith(t):
     s = sorted(t)
-    g = [s[i + 1] - s[i] for i in range(5)]
+    g = [s[i+1]-s[i] for i in range(5)]
     return len(set(g)) == 1
 
-
 def passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
-    if not (sum_min <= sum(t) <= sum_max):
-        return False
-    if sum(1 for n in t if n > 31) < above31_min:
-        return False
-    if no_consec and has_consec(t):
-        return False
-    if no_arith and is_arith(t):
-        return False
+    if not (sum_min <= sum(t) <= sum_max): return False
+    if sum(1 for n in t if n > 31) < above31_min: return False
+    if no_consec and has_consec(t): return False
+    if no_arith and is_arith(t): return False
     odds = sum(1 for n in t if n % 2 != 0)
-    if not (odd_min <= odds <= odd_max):
-        return False
+    if not (odd_min <= odds <= odd_max): return False
     return True
-
 
 def gen_ticket(pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=8000):
     p = [int(n) for n in pool if 1 <= n <= 49]
-    if len(p) < 6:
-        p = list(range(1, 50))
+    if len(p) < 6: p = list(range(1, 50))
     for _ in range(tries):
         t = sorted(random.sample(p, 6))
         if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
             return t
     return sorted(random.sample(p, 6))
-
 
 def decade_spread_ticket(excluded, recent, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=15000):
     for attempt in range(2):
@@ -229,34 +415,27 @@ def decade_spread_ticket(excluded, recent, sum_min, sum_max, above31_min, no_con
         d3 = [n for n in range(20, 30) if n not in skip]
         hi = [n for n in range(30, 50) if n not in skip]
         for _ in range(tries):
-            if not d1 or not d2 or not d3 or len(hi) < 3:
-                break
-            t = sorted(
-                [random.choice(d1), random.choice(d2), random.choice(d3)]
-                + random.sample(hi, 3)
-            )
-            if len(set(t)) < 6:
-                continue
+            if not d1 or not d2 or not d3 or len(hi) < 3: break
+            t = sorted([random.choice(d1), random.choice(d2), random.choice(d3)] + random.sample(hi, 3))
+            if len(set(t)) < 6: continue
             if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
                 return t
     return None
 
-
 def delta_ticket(delta_dist, excluded, recent, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=8000):
     skip = excluded | recent
-    top_deltas = [d for d, _ in delta_dist.most_common(15)] or list(range(1, 10))
+    top_deltas = [d for d, _ in delta_dist.most_common(15)] or list(range(1,10))
     pool = [n for n in range(1, 50) if n not in skip]
     for _ in range(tries):
         start = random.randint(1, 15)
         seq = [start]
-        for _ in range(5):
-            seq.append(seq[-1] + random.choice(top_deltas))
+        for _ in range(5): seq.append(seq[-1] + random.choice(top_deltas))
         seq = [n for n in seq if 1 <= n <= 49 and n not in skip]
         if len(set(seq)) == 6:
             t = sorted(seq)
             if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
                 return t
-    return gen_ticket(pool or list(range(1, 50)), sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
+    return gen_ticket(pool or list(range(1,50)), sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
 
 
 # ──────────────────────────────────────────────
@@ -265,13 +444,8 @@ def delta_ticket(delta_dist, excluded, recent, sum_min, sum_max, above31_min, no
 
 st.sidebar.header("⚙️ Settings")
 
-current_year = datetime.now().year
-year_options = list(range(current_year, current_year - 5, -1))
-years_selected = st.sidebar.multiselect(
-    "Years to load", year_options,
-    default=[current_year, current_year - 1],
-    help="More years = richer stats, slower first load."
-)
+n_years = st.sidebar.slider("Years of history to load", 1, 5, 2,
+    help="1 year ≈ 104 draws. More years = richer stats, slower first load.")
 
 if st.sidebar.button("🔄 Refresh live data", type="primary"):
     st.cache_data.clear()
@@ -284,17 +458,14 @@ sum_max     = st.sidebar.slider("Max sum", 120, 250, 185)
 above31_min = st.sidebar.slider("Min numbers above 31", 0, 6, 3,
     help="The only real edge — avoids jackpot splitting")
 odd_min, odd_max = st.sidebar.select_slider(
-    "Odd count range", options=list(range(7)), value=(2, 4)
-)
+    "Odd count range", options=list(range(7)), value=(2, 4))
 no_consec = st.sidebar.checkbox("No consecutive numbers", value=True)
 no_arith  = st.sidebar.checkbox("No arithmetic sequences", value=True)
 n_tickets = st.sidebar.slider("Tickets to generate", 1, 10, 4)
 
 excl_str = st.sidebar.text_input("Exclude numbers (comma-separated)", "")
-excluded = {
-    int(x.strip()) for x in excl_str.split(",")
-    if x.strip().isdigit() and 1 <= int(x.strip()) <= 49
-}
+excluded = {int(x.strip()) for x in excl_str.split(",")
+            if x.strip().isdigit() and 1 <= int(x.strip()) <= 49}
 
 exclude_recent   = st.sidebar.checkbox("Auto-exclude last draw numbers", value=True)
 n_recent_exclude = st.sidebar.slider("Recent draws to exclude", 1, 5, 1, disabled=not exclude_recent)
@@ -308,18 +479,14 @@ lucky_str = st.sidebar.text_input("Your always-play numbers", "3,9,10,12,17,25")
 # LOAD DATA
 # ──────────────────────────────────────────────
 
-if not years_selected:
-    st.warning("Select at least one year in the sidebar.")
-    st.stop()
-
-with st.spinner("Loading live draw results from lottomaxnumbers.com..."):
-    df = load_draws(tuple(sorted(years_selected, reverse=True)))
+with st.spinner("Loading live draw results from lottoresult.ca..."):
+    df = load_draws(n_years)
 
 if df.empty:
     st.error(
-        "❌ Could not load draw data. "
-        "The data source may be temporarily unavailable. "
-        "Try clicking **Refresh live data** in the sidebar."
+        "❌ Could not load draw data from lottoresult.ca. "
+        "The site may be temporarily unavailable or blocking automated requests. "
+        "Try clicking **Refresh live data** in the sidebar, or wait a few minutes and try again."
     )
     st.stop()
 
@@ -346,7 +513,7 @@ with col_b:
     st.info(f"Next draw: **{next_draw}**")
 st.markdown("---")
 
-# ── Pools ─────────────────────────────────────
+# ── Build pools ───────────────────────────────
 recent_set = set()
 if exclude_recent:
     for _, row in df.tail(n_recent_exclude).iterrows():
@@ -366,14 +533,14 @@ over_pool  = [n for n in over15 if n not in excluded and n not in recent_set]
 delta_dist = Counter()
 for _, row in df.iterrows():
     s = sorted(row[NUMBER_COLS].tolist())
-    delta_dist.update(s[i + 1] - s[i] for i in range(5))
+    delta_dist.update(s[i+1]-s[i] for i in range(5))
 
 
 # ──────────────────────────────────────────────
 # TABS
 # ──────────────────────────────────────────────
 
-tab_gen, tab_lucky, tab_freq, tab_gaps, tab_dec, tab_pairs, tab_check, tab_hist = st.tabs([
+tab_gen, tab_lucky, tab_freq_t, tab_gaps_t, tab_dec, tab_pairs, tab_check, tab_hist = st.tabs([
     "🎟️ Generate", "🩷 Lucky combo", "📊 Frequency",
     "⏳ Gaps", "🔢 Decades", "🤝 Pairs", "🔍 Check combo", "📋 History"
 ])
@@ -382,7 +549,7 @@ tab_gen, tab_lucky, tab_freq, tab_gaps, tab_dec, tab_pairs, tab_check, tab_hist 
 with tab_gen:
     st.subheader("Ticket generator")
     if exclude_recent and recent_set:
-        st.info(f"Auto-excluding from pool (last {n_recent_exclude} draw{'s' if n_recent_exclude > 1 else ''}): `{sorted(recent_set)}`")
+        st.info(f"Auto-excluding (last {n_recent_exclude} draw{'s' if n_recent_exclude>1 else ''}): `{sorted(recent_set)}`")
 
     gen_mode   = st.selectbox("Strategy", [
         "Decade spread — recommended", "Filtered random",
@@ -397,10 +564,8 @@ with tab_gen:
         if show_lucky and lucky_str.strip():
             try:
                 lucky = sorted(int(x.strip()) for x in lucky_str.split(",") if x.strip().isdigit())
-                if len(lucky) != 6:
-                    lucky = []
-            except Exception:
-                lucky = []
+                if len(lucky) != 6: lucky = []
+            except Exception: lucky = []
 
         tickets = []
         for _ in range(n_tickets):
@@ -417,43 +582,34 @@ with tab_gen:
             elif gen_mode == "Delta system":
                 t = delta_ticket(delta_dist, excluded, recent_set, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
             else:
-                gut = [n for n in [2, 4, 5, 6, 7, 8, 13, 14, 15, 19, 23, 26, 27, 29, 32, 33, 35, 37, 39, 42, 43, 44, 47, 48]
+                gut = [n for n in [2,4,5,6,7,8,13,14,15,19,23,26,27,29,32,33,35,37,39,42,43,44,47,48]
                        if n not in excluded and n not in recent_set]
                 t = gen_ticket(gut or fresh_pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            if t:
-                tickets.append(t)
+            if t: tickets.append(t)
 
         draw_num = 1
         if lucky:
-            s = sum(lucky)
-            above = sum(1 for n in lucky if n > 31)
-            odds  = sum(1 for n in lucky if n % 2 != 0)
+            s = sum(lucky); above = sum(1 for n in lucky if n>31); odds = sum(1 for n in lucky if n%2!=0)
             in_rec = [n for n in lucky if n in recent_set]
             st.markdown("---")
             st.markdown(f"**🩷 Draw {draw_num} — Lucky combo:** `{lucky}`")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Sum", s, delta="OK ✓" if 115 <= s <= 185 else "⚠️ Low")
-            c2.metric("Above 31", f"{above}/6", delta="OK ✓" if above >= 3 else "⚠️ Low")
-            c3.metric("Odd/Even", f"{odds}/{6 - odds}")
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Sum", s, delta="OK ✓" if 115<=s<=185 else "⚠️ Low")
+            c2.metric("Above 31", f"{above}/6", delta="OK ✓" if above>=3 else "⚠️ Low")
+            c3.metric("Odd/Even", f"{odds}/{6-odds}")
             c4.metric("Split risk", split_risk(lucky).split()[0])
-            if in_rec:
-                st.warning(f"⚠️ {in_rec} appeared in the last draw(s)")
+            if in_rec: st.warning(f"⚠️ {in_rec} appeared in the last draw(s)")
             draw_num += 1
 
         for t in tickets:
-            s = sum(t)
-            above = sum(1 for n in t if n > 31)
-            odds  = sum(1 for n in t if n % 2 != 0)
+            s = sum(t); above = sum(1 for n in t if n>31); odds = sum(1 for n in t if n%2!=0)
             in_rec = [n for n in t if n in recent_set]
             st.markdown("---")
             st.markdown(f"**Draw {draw_num}:** `{t}`")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Sum", s)
-            c2.metric("Above 31", f"{above}/6")
-            c3.metric("Odd/Even", f"{odds}/{6 - odds}")
-            c4.metric("Split risk", split_risk(t).split()[0])
-            if in_rec:
-                st.warning(f"⚠️ {in_rec} appeared in last draw(s) — consider regenerating")
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Sum", s); c2.metric("Above 31", f"{above}/6")
+            c3.metric("Odd/Even", f"{odds}/{6-odds}"); c4.metric("Split risk", split_risk(t).split()[0])
+            if in_rec: st.warning(f"⚠️ {in_rec} appeared in last draw(s) — consider regenerating")
             draw_num += 1
 
 # ── LUCKY COMBO ───────────────────────────────
@@ -462,53 +618,42 @@ with tab_lucky:
     try:
         lucky = sorted(int(x.strip()) for x in lucky_str.split(",") if x.strip().isdigit())
         if len(lucky) == 6:
-            s = sum(lucky)
-            above = sum(1 for n in lucky if n > 31)
-            odds  = sum(1 for n in lucky if n % 2 != 0)
+            s = sum(lucky); above = sum(1 for n in lucky if n>31); odds = sum(1 for n in lucky if n%2!=0)
             in_rec = [n for n in lucky if n in recent_set]
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Sum", s, delta="OK ✓" if 115 <= s <= 185 else "⚠️ Out of range")
-            c2.metric("Above 31", f"{above}/6", delta="OK ✓" if above >= 3 else "⚠️ Too low")
-            c3.metric("Odd/Even", f"{odds}/{6 - odds}")
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Sum", s, delta="OK ✓" if 115<=s<=185 else "⚠️ Out of range")
+            c2.metric("Above 31", f"{above}/6", delta="OK ✓" if above>=3 else "⚠️ Too low")
+            c3.metric("Odd/Even", f"{odds}/{6-odds}")
             c4.metric("Consecutive?", "Yes ⚠️" if has_consec(lucky) else "No ✓")
-
             st.write(f"**Split risk:** {split_risk(lucky)}")
-            if in_rec:
-                st.warning(f"⚠️ {in_rec} appeared in the last {n_recent_exclude} draw(s).")
-
+            if in_rec: st.warning(f"⚠️ {in_rec} appeared in the last {n_recent_exclude} draw(s).")
             ctx = pd.DataFrame({
-                "Number":               lucky,
-                "All-time frequency":   [freq.get(n, 0) for n in lucky],
+                "Number": lucky,
+                "All-time frequency": [freq.get(n, 0) for n in lucky],
                 "Draws since last seen": [int(gaps_df.set_index("Number").loc[n, "Gap"]) for n in lucky],
-                "Popularity score":     [popularity_score(n) for n in lucky],
-                "Above 31":             ["Yes" if n > 31 else "No" for n in lucky],
-                "In recent draw?":      ["🔴 Yes" if n in recent_set else "No" for n in lucky],
+                "Popularity score": [popularity_score(n) for n in lucky],
+                "Above 31": ["Yes" if n>31 else "No" for n in lucky],
+                "In recent draw?": ["🔴 Yes" if n in recent_set else "No" for n in lucky],
             })
             st.dataframe(ctx, use_container_width=True)
-
-            if s < 115:
-                st.error(f"Sum {s} is well below the 115–185 historical range.")
-            if above == 0:
-                st.error("Zero numbers above 31 — entirely birthday territory. Very high split risk.")
-            if has_consec(lucky):
-                st.warning("Contains consecutive numbers (9–10).")
+            if s < 115: st.error(f"Sum {s} is well below the 115–185 historical range.")
+            if above == 0: st.error("Zero numbers above 31 — entirely birthday territory. Very high split risk.")
+            if has_consec(lucky): st.warning("Contains consecutive numbers (9–10).")
     except Exception as e:
         st.warning(f"Could not parse lucky numbers: {e}")
 
 # ── FREQUENCY ─────────────────────────────────
-with tab_freq:
+with tab_freq_t:
     st.subheader("Number frequency")
-    freq_df = pd.DataFrame({"Number": list(range(1, 50)), "Frequency": [freq.get(n, 0) for n in range(1, 50)]})
+    freq_df = pd.DataFrame({"Number": list(range(1,50)), "Frequency": [freq.get(n,0) for n in range(1,50)]})
     fig = px.bar(freq_df, x="Number", y="Frequency", color="Frequency",
                  color_continuous_scale="Blues", title="All-time frequency per number")
     st.plotly_chart(fig, use_container_width=True)
-    c1, c2 = st.columns(2)
-    c1.metric("🔥 Top 6 hot", str(hot6))
-    c2.metric("❄️ Bottom 6 cold", str(cold6))
+    c1,c2 = st.columns(2)
+    c1.metric("🔥 Top 6 hot", str(hot6)); c2.metric("❄️ Bottom 6 cold", str(cold6))
 
 # ── GAPS ──────────────────────────────────────
-with tab_gaps:
+with tab_gaps_t:
     st.subheader("Gap analysis")
     fig2 = px.bar(gaps_df, x="Number", y="Gap", color="Gap",
                   color_continuous_scale="Oranges", title="Draws since last appearance")
@@ -521,8 +666,7 @@ with tab_dec:
     st.subheader("Decade breakdown")
     dec_df = decade_breakdown(df)
     fig3 = px.bar(dec_df, x="Decade", y="Avg per draw", color="Avg per draw",
-                  color_continuous_scale="Teal", text="Avg per draw",
-                  title="Average numbers drawn per decade range")
+                  color_continuous_scale="Teal", text="Avg per draw", title="Decade breakdown")
     fig3.update_traces(textposition="outside")
     st.plotly_chart(fig3, use_container_width=True)
     st.dataframe(dec_df, use_container_width=True)
@@ -532,8 +676,7 @@ with tab_pairs:
     st.subheader("Most common pairs")
     p_df = pair_freq(df)
     fig4 = px.bar(p_df, x="Count", y="Pair", orientation="h",
-                  color="Count", color_continuous_scale="Viridis",
-                  title="Top 25 most co-occurring pairs")
+                  color="Count", color_continuous_scale="Viridis", title="Top 25 most co-occurring pairs")
     fig4.update_layout(yaxis={"categoryorder": "total ascending"}, height=600)
     st.plotly_chart(fig4, use_container_width=True)
 
@@ -544,17 +687,13 @@ with tab_check:
     if check_str.strip():
         try:
             check = tuple(sorted(int(x.strip()) for x in check_str.split(",") if x.strip().isdigit()))
-            if len(check) != 6:
-                st.warning("Enter exactly 6 numbers.")
+            if len(check) != 6: st.warning("Enter exactly 6 numbers.")
             else:
                 past = [tuple(sorted(row[NUMBER_COLS].tolist())) for _, row in df.iterrows()]
                 count = past.count(check)
-                if count > 0:
-                    st.success(f"✅ Appeared {count} time(s) in {len(df)} draws.")
-                else:
-                    st.info(f"❌ Never appeared in {len(df)} draws analyzed.")
-        except Exception:
-            st.warning("Invalid input.")
+                if count > 0: st.success(f"✅ Appeared {count} time(s) in {len(df)} draws.")
+                else: st.info(f"❌ Never appeared in {len(df)} draws analyzed.")
+        except Exception: st.warning("Invalid input.")
 
 # ── HISTORY ───────────────────────────────────
 with tab_hist:
@@ -566,11 +705,10 @@ with tab_hist:
         use_container_width=True, height=500
     )
 
-# ──────────────────────────────────────────────
 st.markdown("---")
 st.caption(
     "**Honest disclaimer:** Lotto 6/49 is a certified random draw. "
     "Your odds are 1 in 13,983,816 per ticket, every draw, forever. "
-    "The only real edge is split avoidance — unpopular numbers above 31 means if you win, you keep more of it. "
-    "Data: lottomaxnumbers.com · Cache refreshes every hour."
+    "The only real edge is split avoidance — unpopular numbers above 31. "
+    "Data: lottoresult.ca · Cache refreshes every hour."
 )
