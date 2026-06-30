@@ -13,13 +13,17 @@ st.set_page_config(page_title="Lotto 6/49 Live Analyzer", page_icon="🎲", layo
 
 st.title("🎲 Lotto 6/49 — Live Analyzer")
 st.caption(
-    "Pulls real draw results live from the web. No CSV. No ML. No snake oil. "
+    "Pulls real draw results live from ca.lottonumbers.com. No CSV. No ML. No snake oil. "
     "Honest statistics + split-avoidance logic. Every combo = 1 in 13,983,816 odds."
 )
 
 # ──────────────────────────────────────────────
 # CONSTANTS
 # ──────────────────────────────────────────────
+
+BASE_URL = "https://ca.lottonumbers.com"
+PAST_URL = f"{BASE_URL}/lotto-649/past-numbers"   # last ~6 months
+YEAR_URL = f"{BASE_URL}/lotto-649/numbers"         # /YYYY for older
 
 HEADERS = {
     "User-Agent": (
@@ -29,232 +33,181 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
 }
 
 NUMBER_COLS = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
 
-# Regex: longest match first to avoid '1' matching before '19'
-NUM_RE = re.compile(r'\b(4[0-9]|[1-3][0-9]|[1-9])\b')
-
 
 # ──────────────────────────────────────────────
-# SCRAPING
+# SCRAPING  — ca.lottonumbers.com
+#
+# Page structure (confirmed):
+#   Each draw is a <tr> containing:
+#     - a date cell (e.g. "Saturday\nDecember 28 2024")
+#     - a <ul> with 7 <li> items: first 6 = main balls, 7th = bonus
+#     - jackpot / winners cells (ignored)
+#
+# We parse the <ul class="..."> lists with exactly 7 <li> numeric items.
+# This is tight and unambiguous — no date-digit contamination possible.
 # ──────────────────────────────────────────────
 
-def _extract_balls_from_text(text: str, exclude_ints: set[int] | None = None) -> list[int]:
-    """
-    Extract 6 distinct lotto balls (1–49) from a text block.
-
-    exclude_ints: a set of integers to strip before picking balls.
-    Used to remove date components (year, month number, day) that
-    commonly bleed into the candidate pool and corrupt results.
-
-    Returns a list of exactly 6 ints, or [] if extraction fails.
-    """
-    if exclude_ints is None:
-        exclude_ints = set()
-
-    raw = NUM_RE.findall(text)
-    seen: set[int] = set()
-    candidates: list[int] = []
-    for s in raw:
-        n = int(s)
-        if n not in seen and n not in exclude_ints:
-            seen.add(n)
-            candidates.append(n)
-
-    if len(candidates) >= 6:
-        return candidates[:6]
-    return []
-
-
-def _date_exclusions(d: date) -> set[int]:
-    """
-    Return the set of integers that appear in a date's numeric representation
-    and must be excluded from ball extraction to avoid contamination.
-
-    e.g. 2026-04-19  →  {2026, 26, 4, 19}  filtered to 1–49  →  {4, 19, 26}
-    """
-    parts = {d.year, d.month, d.day, d.year % 100}
-    return {p for p in parts if 1 <= p <= 49}
-
-
-def _session() -> requests.Session:
-    """Return a requests Session with browser-like headers."""
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    return s
-
-
-def fetch_draw_dates_for_year(sess: requests.Session, year: int) -> list[date]:
-    """
-    Fetch the draw-date index page for a given year and return all individual
-    draw dates found as href slugs.
-    """
-    url = f"https://www.lottoresult.ca/games/lotto-649/results/{year}"
+def _fetch(url: str) -> BeautifulSoup | None:
     try:
-        r = sess.get(url, timeout=20)
+        r = requests.get(url, headers=HEADERS, timeout=20)
         r.raise_for_status()
-    except Exception:
-        return []
-
-    soup = BeautifulSoup(r.text, "lxml")
-    pattern = re.compile(rf"/games/lotto-649/results/{year}-(\d{{2}})-(\d{{2}})$")
-    dates: list[date] = []
-    seen: set[str] = set()
-    for link in soup.find_all("a", href=pattern):
-        href = link["href"]
-        if href in seen:
-            continue
-        seen.add(href)
-        m = re.search(r"(\d{4}-\d{2}-\d{2})$", href)
-        if m:
-            try:
-                dates.append(datetime.strptime(m.group(1), "%Y-%m-%d").date())
-            except ValueError:
-                pass
-    return sorted(set(dates))
-
-
-def fetch_draw_result(sess: requests.Session, draw_date: date) -> dict | None:
-    """
-    Fetch a single draw's result page and extract the 6 winning balls + bonus.
-
-    Strategy:
-    1. Build the per-draw URL.
-    2. Parse the page and look for the smallest DOM container that holds
-       exactly 6 or 7 unique numbers in 1–49 after excluding date digits.
-    3. Fall back to full-page extraction if no clean container found.
-    4. Validate the result strictly (6 distinct numbers, all 1–49).
-    """
-    url = f"https://www.lottoresult.ca/games/lotto-649/results/{draw_date}"
-    try:
-        r = sess.get(url, timeout=15)
-        r.raise_for_status()
+        return BeautifulSoup(r.text, "lxml")
     except Exception:
         return None
 
-    soup = BeautifulSoup(r.text, "lxml")
-    exclusions = _date_exclusions(draw_date)
 
-    # ── Strategy 1: find a tight container (div/ul/section/table) ──────────
-    # We want the smallest element whose text yields exactly 6–7 unique
-    # 1–49 numbers (6 main balls + optional bonus).
-    candidates_by_size: list[tuple[int, list[int], int | None]] = []
-
-    for tag in soup.find_all(["div", "ul", "ol", "section", "table", "span"]):
-        text = tag.get_text(separator=" ")
-        balls = _extract_balls_from_text(text, exclusions)
-        if len(balls) >= 6:
-            # Score by: fewest extra numbers (tighter container = better)
-            all_nums = NUM_RE.findall(text)
-            extra = len(all_nums) - 6
-            bonus = balls[6] if len(balls) >= 7 else None
-            candidates_by_size.append((extra, balls[:6], bonus, len(text)))
-
-    if candidates_by_size:
-        # Sort by (fewest extra numbers, shortest text) — tightest container wins
-        candidates_by_size.sort(key=lambda x: (x[0], x[3]))
-        _, balls, bonus, _ = candidates_by_size[0]
-        if len(set(balls)) == 6:
-            return _build_row(draw_date, balls, bonus)
-
-    # ── Strategy 2: full page text with exclusions ──────────────────────────
-    text = soup.get_text(separator=" ")
-    balls = _extract_balls_from_text(text, exclusions)
-    if len(set(balls)) == 6:
-        return _build_row(draw_date, balls, None)
-
+def _parse_date_text(text: str) -> date | None:
+    """Parse date strings like 'Saturday December 28 2024' or 'December 28 2024'."""
+    text = re.sub(r'\s+', ' ', text.strip())
+    for fmt in ("%A %B %d %Y", "%B %d %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    # Try with abbreviated month
+    m = re.search(
+        r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})\s+(\d{4})',
+        text, re.IGNORECASE
+    )
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}", "%b %d %Y").date()
+        except ValueError:
+            pass
     return None
 
 
-def _build_row(draw_date: date, balls: list[int], bonus: int | None) -> dict:
-    return {
-        "DATE": draw_date,
-        "NUMBER DRAWN 1": balls[0],
-        "NUMBER DRAWN 2": balls[1],
-        "NUMBER DRAWN 3": balls[2],
-        "NUMBER DRAWN 4": balls[3],
-        "NUMBER DRAWN 5": balls[4],
-        "NUMBER DRAWN 6": balls[5],
-        "BONUS": bonus,
-    }
+def _parse_draws_from_soup(soup: BeautifulSoup) -> list[dict]:
+    """
+    Extract all draws from a ca.lottonumbers.com page.
+
+    Strategy:
+      1. Find every <ul> that contains at least 6 <li> children
+         whose text is a pure integer in 1–49.
+      2. Walk up from that <ul> to find the nearest date text.
+      3. Build a draw row.
+
+    This avoids any ambiguity: the <ul> ball lists are the only
+    elements on the page with 6–7 consecutive 1–49 integers.
+    """
+    draws: list[dict] = []
+    seen_dates: set[date] = set()
+
+    # Find all <ul> candidates that look like ball lists
+    for ul in soup.find_all("ul"):
+        lis = ul.find_all("li", recursive=False)
+        if len(lis) < 6:
+            # Some pages wrap in nested uls — try all li children
+            lis = ul.find_all("li")
+        if len(lis) < 6:
+            continue
+
+        # Extract numeric values from <li> text, must all be 1–49
+        nums = []
+        for li in lis:
+            t = li.get_text(strip=True)
+            # Strip footnotes/superscripts: keep only leading digits
+            t = re.match(r'^\d+', t)
+            if not t:
+                break
+            n = int(t.group())
+            if not (1 <= n <= 49):
+                break
+            nums.append(n)
+
+        if len(nums) < 6:
+            continue  # Not a ball list
+
+        balls = nums[:6]
+        bonus = nums[6] if len(nums) >= 7 else None
+
+        # Validate: 6 distinct numbers
+        if len(set(balls)) != 6:
+            continue
+
+        # Walk up the DOM to find the nearest date
+        draw_date = None
+        node = ul.parent
+        for _ in range(8):
+            if node is None:
+                break
+            text = node.get_text(separator=" ", strip=True)
+            d = _parse_date_text(text)
+            if d:
+                draw_date = d
+                break
+            # Also check siblings (date might be in a sibling cell)
+            for sib in node.find_all(string=True):
+                d = _parse_date_text(sib.strip())
+                if d:
+                    draw_date = d
+                    break
+            if draw_date:
+                break
+            node = node.parent
+
+        if draw_date is None:
+            continue
+        if draw_date in seen_dates:
+            continue
+
+        seen_dates.add(draw_date)
+        draws.append({
+            "DATE": draw_date,
+            "NUMBER DRAWN 1": balls[0],
+            "NUMBER DRAWN 2": balls[1],
+            "NUMBER DRAWN 3": balls[2],
+            "NUMBER DRAWN 4": balls[3],
+            "NUMBER DRAWN 5": balls[4],
+            "NUMBER DRAWN 6": balls[5],
+            "BONUS": bonus,
+        })
+
+    return draws
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_draws(n_years: int) -> pd.DataFrame:
     """
-    Two-phase load:
-    Phase 1 – collect all draw dates from year-index pages.
-    Phase 2 – fetch each individual draw page for clean, isolated extraction.
+    Load Lotto 6/49 draw history from ca.lottonumbers.com.
 
-    This avoids the DOM-walking approach that contaminated results with
-    navigation numbers and date digits.
+    Sources used (in order):
+      1. /lotto-649/past-numbers  — most recent ~6 months, always fetched
+      2. /lotto-649/numbers/YYYY  — one page per year for older history
     """
-    sess = _session()
-    current_year = datetime.now().year
-    years = list(range(current_year, current_year - n_years, -1))
-
-    # ── Phase 1: collect dates ───────────────────────────────────────────
-    all_dates: list[date] = []
-    date_progress = st.progress(0, text="Fetching draw date index...")
-    for idx, year in enumerate(years):
-        dates = fetch_draw_dates_for_year(sess, year)
-        all_dates.extend(dates)
-        date_progress.progress((idx + 1) / len(years), text=f"Indexed {year}: {len(dates)} draws found")
-    date_progress.empty()
-
-    all_dates = sorted(set(all_dates))
-    if not all_dates:
-        return pd.DataFrame()
-
-    # ── Phase 2: fetch individual results ───────────────────────────────
     all_draws: list[dict] = []
-    result_progress = st.progress(0, text="Fetching individual draw results...")
-    failed = 0
-    for idx, draw_date in enumerate(all_dates):
-        row = fetch_draw_result(sess, draw_date)
-        if row:
-            all_draws.append(row)
-        else:
-            failed += 1
-        pct = (idx + 1) / len(all_dates)
-        result_progress.progress(
-            pct,
-            text=f"Loaded {idx + 1}/{len(all_dates)} draws  ({failed} failed)"
-        )
-    result_progress.empty()
+    current_year = datetime.now().year
 
-    if failed > 0:
-        st.warning(
-            f"⚠️ {failed} draw(s) could not be parsed and were skipped. "
-            "Try **Refresh live data** to retry."
+    # ── Phase 1: recent results page ────────────────────────────────────
+    progress = st.progress(0, text="Fetching recent results...")
+    soup = _fetch(PAST_URL)
+    if soup:
+        all_draws.extend(_parse_draws_from_soup(soup))
+
+    # ── Phase 2: year archive pages ─────────────────────────────────────
+    years = list(range(current_year, current_year - n_years, -1))
+    for idx, year in enumerate(years):
+        progress.progress(
+            (idx + 1) / (len(years) + 1),
+            text=f"Fetching {year} archive..."
         )
+        soup = _fetch(f"{YEAR_URL}/{year}")
+        if soup:
+            all_draws.extend(_parse_draws_from_soup(soup))
+
+    progress.empty()
 
     if not all_draws:
         return pd.DataFrame()
 
     df = pd.DataFrame(all_draws)
     df = df.sort_values("DATE").reset_index(drop=True)
-    df = df.drop_duplicates(subset=NUMBER_COLS + ["DATE"]).reset_index(drop=True)
-
-    # ── Validate: flag rows where numbers are out of range or duplicated ─
-    def _is_valid_row(row):
-        nums = [row[c] for c in NUMBER_COLS]
-        return (
-            len(set(nums)) == 6
-            and all(isinstance(n, (int, float)) and 1 <= int(n) <= 49 for n in nums)
-        )
-
-    valid_mask = df.apply(_is_valid_row, axis=1)
-    n_invalid = (~valid_mask).sum()
-    if n_invalid > 0:
-        st.warning(f"⚠️ {n_invalid} draw(s) had invalid numbers and were removed.")
-        df = df[valid_mask].reset_index(drop=True)
-
+    # Dedup by date (keep first occurrence per date)
+    df = df.drop_duplicates(subset=["DATE"]).reset_index(drop=True)
     return df
 
 
@@ -414,13 +367,13 @@ lucky_str = st.sidebar.text_input("Your always-play numbers", "3,9,10,12,17,25")
 # LOAD DATA
 # ──────────────────────────────────────────────
 
-with st.spinner("Loading live draw results from lottoresult.ca..."):
+with st.spinner("Loading live draw results from ca.lottonumbers.com..."):
     df = load_draws(n_years)
 
 if df.empty:
     st.error(
-        "❌ Could not load draw data from lottoresult.ca. "
-        "The site may be temporarily unavailable or blocking automated requests. "
+        "❌ Could not load draw data from ca.lottonumbers.com. "
+        "The site may be temporarily unavailable. "
         "Try clicking **Refresh live data** in the sidebar, or wait a few minutes and try again."
     )
     st.stop()
@@ -431,7 +384,7 @@ st.success(f"✅ {len(df)} draws loaded — most recent: **{df['DATE'].iloc[-1]}
 last_row   = df.iloc[-1]
 last_nums  = [int(last_row[c]) for c in NUMBER_COLS]
 last_bonus = int(last_row["BONUS"]) if pd.notna(last_row.get("BONUS")) else None
-prev_row   = df.iloc[-2]
+prev_row   = df.iloc[-2] if len(df) >= 2 else last_row
 prev_nums  = [int(prev_row[c]) for c in NUMBER_COLS]
 
 st.markdown("---")
@@ -650,5 +603,5 @@ st.caption(
     "**Honest disclaimer:** Lotto 6/49 is a certified random draw. "
     "Your odds are 1 in 13,983,816 per ticket, every draw, forever. "
     "The only real edge is split avoidance — unpopular numbers above 31. "
-    "Data: lottoresult.ca · Cache refreshes every hour."
+    "Data: ca.lottonumbers.com · Cache refreshes every hour."
 )
