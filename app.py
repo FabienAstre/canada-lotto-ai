@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import requests
 from bs4 import BeautifulSoup
 from collections import Counter
 from itertools import combinations
 import random
 import re
+import numpy as np
 from datetime import datetime, date
 
 st.set_page_config(page_title="Lotto 6/49 Live Analyzer", page_icon="🎲", layout="wide")
@@ -22,8 +24,8 @@ st.caption(
 # ──────────────────────────────────────────────
 
 BASE_URL = "https://ca.lottonumbers.com"
-PAST_URL = f"{BASE_URL}/lotto-649/past-numbers"   # last ~6 months
-YEAR_URL = f"{BASE_URL}/lotto-649/numbers"         # /YYYY for older
+PAST_URL = f"{BASE_URL}/lotto-649/past-numbers"
+YEAR_URL = f"{BASE_URL}/lotto-649/numbers"
 
 HEADERS = {
     "User-Agent": (
@@ -37,18 +39,19 @@ HEADERS = {
 
 NUMBER_COLS = [f"NUMBER DRAWN {i}" for i in range(1, 7)]
 
+# Scoring weights — must sum to 1.0
+W_SPLIT   = 0.40   # split-avoidance  (numbers >31, unpopular combos)
+W_GAP     = 0.25   # historical gap balance
+W_DECADE  = 0.15   # decade distribution
+W_ODD     = 0.10   # odd/even balance
+W_PAIR    = 0.10   # pair/triple avoidance
+
+CANDIDATES = 100_000   # tickets evaluated per run
+TOP_N      = 10        # best tickets returned
+
 
 # ──────────────────────────────────────────────
-# SCRAPING  — ca.lottonumbers.com
-#
-# Page structure (confirmed):
-#   Each draw is a <tr> containing:
-#     - a date cell (e.g. "Saturday\nDecember 28 2024")
-#     - a <ul> with 7 <li> items: first 6 = main balls, 7th = bonus
-#     - jackpot / winners cells (ignored)
-#
-# We parse the <ul class="..."> lists with exactly 7 <li> numeric items.
-# This is tight and unambiguous — no date-digit contamination possible.
+# SCRAPING
 # ──────────────────────────────────────────────
 
 def _fetch(url: str) -> BeautifulSoup | None:
@@ -61,14 +64,12 @@ def _fetch(url: str) -> BeautifulSoup | None:
 
 
 def _parse_date_text(text: str) -> date | None:
-    """Parse date strings like 'Saturday December 28 2024' or 'December 28 2024'."""
     text = re.sub(r'\s+', ' ', text.strip())
     for fmt in ("%A %B %d %Y", "%B %d %Y", "%d %B %Y"):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             pass
-    # Try with abbreviated month
     m = re.search(
         r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})\s+(\d{4})',
         text, re.IGNORECASE
@@ -82,35 +83,19 @@ def _parse_date_text(text: str) -> date | None:
 
 
 def _parse_draws_from_soup(soup: BeautifulSoup) -> list[dict]:
-    """
-    Extract all draws from a ca.lottonumbers.com page.
-
-    Strategy:
-      1. Find every <ul> that contains at least 6 <li> children
-         whose text is a pure integer in 1–49.
-      2. Walk up from that <ul> to find the nearest date text.
-      3. Build a draw row.
-
-    This avoids any ambiguity: the <ul> ball lists are the only
-    elements on the page with 6–7 consecutive 1–49 integers.
-    """
     draws: list[dict] = []
     seen_dates: set[date] = set()
 
-    # Find all <ul> candidates that look like ball lists
     for ul in soup.find_all("ul"):
         lis = ul.find_all("li", recursive=False)
         if len(lis) < 6:
-            # Some pages wrap in nested uls — try all li children
             lis = ul.find_all("li")
         if len(lis) < 6:
             continue
 
-        # Extract numeric values from <li> text, must all be 1–49
         nums = []
         for li in lis:
             t = li.get_text(strip=True)
-            # Strip footnotes/superscripts: keep only leading digits
             t = re.match(r'^\d+', t)
             if not t:
                 break
@@ -120,16 +105,14 @@ def _parse_draws_from_soup(soup: BeautifulSoup) -> list[dict]:
             nums.append(n)
 
         if len(nums) < 6:
-            continue  # Not a ball list
+            continue
 
         balls = nums[:6]
         bonus = nums[6] if len(nums) >= 7 else None
 
-        # Validate: 6 distinct numbers
         if len(set(balls)) != 6:
             continue
 
-        # Walk up the DOM to find the nearest date
         draw_date = None
         node = ul.parent
         for _ in range(8):
@@ -140,7 +123,6 @@ def _parse_draws_from_soup(soup: BeautifulSoup) -> list[dict]:
             if d:
                 draw_date = d
                 break
-            # Also check siblings (date might be in a sibling cell)
             for sib in node.find_all(string=True):
                 d = _parse_date_text(sib.strip())
                 if d:
@@ -150,9 +132,7 @@ def _parse_draws_from_soup(soup: BeautifulSoup) -> list[dict]:
                 break
             node = node.parent
 
-        if draw_date is None:
-            continue
-        if draw_date in seen_dates:
+        if draw_date is None or draw_date in seen_dates:
             continue
 
         seen_dates.add(draw_date)
@@ -172,24 +152,15 @@ def _parse_draws_from_soup(soup: BeautifulSoup) -> list[dict]:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_draws(n_years: int) -> pd.DataFrame:
-    """
-    Load Lotto 6/49 draw history from ca.lottonumbers.com.
-
-    Sources used (in order):
-      1. /lotto-649/past-numbers  — most recent ~6 months, always fetched
-      2. /lotto-649/numbers/YYYY  — one page per year for older history
-    """
     all_draws: list[dict] = []
     current_year = datetime.now().year
+    years = list(range(current_year, current_year - n_years, -1))
 
-    # ── Phase 1: recent results page ────────────────────────────────────
     progress = st.progress(0, text="Fetching recent results...")
     soup = _fetch(PAST_URL)
     if soup:
         all_draws.extend(_parse_draws_from_soup(soup))
 
-    # ── Phase 2: year archive pages ─────────────────────────────────────
-    years = list(range(current_year, current_year - n_years, -1))
     for idx, year in enumerate(years):
         progress.progress(
             (idx + 1) / (len(years) + 1),
@@ -206,7 +177,6 @@ def load_draws(n_years: int) -> pd.DataFrame:
 
     df = pd.DataFrame(all_draws)
     df = df.sort_values("DATE").reset_index(drop=True)
-    # Dedup by date (keep first occurrence per date)
     df = df.drop_duplicates(subset=["DATE"]).reset_index(drop=True)
     return df
 
@@ -285,7 +255,191 @@ def passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_m
     if not (odd_min <= odds <= odd_max): return False
     return True
 
+
+# ──────────────────────────────────────────────
+# SCORING ENGINE
+# ──────────────────────────────────────────────
+
+def build_scoring_tables(df, freq, gaps_df):
+    """
+    Pre-compute per-number and per-pair lookup tables used by score_ticket().
+    Call once after data loads; pass results into score_ticket to avoid
+    recomputation inside the hot loop.
+
+    Returns a dict of lookup tables.
+    """
+    n_draws = len(df)
+
+    # ── 1. Split-avoidance: popularity score per number (0–1, lower = better)
+    # We invert so that unpopular (high >31) numbers score high.
+    pop_raw = {n: popularity_score(n) for n in range(1, 50)}
+    pop_max = max(pop_raw.values())
+    pop_min = min(pop_raw.values())
+    # Normalise and invert: score=1 means maximally unpopular (good for split avoid)
+    split_score = {
+        n: 1.0 - (pop_raw[n] - pop_min) / (pop_max - pop_min)
+        for n in range(1, 50)
+    }
+
+    # ── 2. Gap score per number: ideal gap ≈ 49/6 ≈ 8 draws
+    # Score peaks at the ideal gap and falls off symmetrically.
+    ideal_gap = n_draws / 6  # expected average gap
+    gap_by_num = gaps_df.set_index("Number")["Gap"].to_dict()
+    # Distance from ideal — normalise so 0 distance → score 1
+    max_possible_gap = n_draws
+    gap_score = {
+        n: max(0.0, 1.0 - abs(gap_by_num.get(n, ideal_gap) - ideal_gap) / max_possible_gap)
+        for n in range(1, 50)
+    }
+
+    # ── 3. Decade distribution score: computed per-ticket, not per-number
+    # Target: ≥1 number per decade.  Pre-compute decade membership.
+    decade_map = {}
+    for n in range(1, 50):
+        if n <= 9:    decade_map[n] = 0
+        elif n <= 19: decade_map[n] = 1
+        elif n <= 29: decade_map[n] = 2
+        elif n <= 39: decade_map[n] = 3
+        else:         decade_map[n] = 4
+
+    # ── 4. Pair/triple frequency — normalise count to 0–1 (higher count = more popular = worse)
+    pair_counts: Counter = Counter()
+    for _, row in df.iterrows():
+        pair_counts.update(combinations(sorted(row[NUMBER_COLS].tolist()), 2))
+    max_pair = max(pair_counts.values()) if pair_counts else 1
+    # pair_penalty[pair] → 0 (never seen together) … 1 (most common pair)
+    pair_penalty = {pair: cnt / max_pair for pair, cnt in pair_counts.items()}
+
+    return {
+        "split_score": split_score,
+        "gap_score":   gap_score,
+        "decade_map":  decade_map,
+        "pair_penalty": pair_penalty,
+        "n_draws": n_draws,
+    }
+
+
+def score_ticket(ticket: list[int], tables: dict) -> tuple[float, dict]:
+    """
+    Score a 6-number ticket on 0–100 scale using the weighted rubric:
+        40% split-avoidance
+        25% gap balance
+        15% decade distribution
+        10% odd/even balance
+        10% pair/triple avoidance
+
+    Returns (total_score, component_scores_dict).
+    Component scores are each 0–1 before weighting.
+    """
+    split_score  = tables["split_score"]
+    gap_score    = tables["gap_score"]
+    decade_map   = tables["decade_map"]
+    pair_penalty = tables["pair_penalty"]
+
+    t = sorted(ticket)
+
+    # ── A. Split-avoidance (40%) ───────────────────────────────────────
+    # Average per-number split score (higher = more unpopular = better).
+    s_split = sum(split_score[n] for n in t) / 6
+
+    # ── B. Gap balance (25%) ──────────────────────────────────────────
+    # Average per-number gap score; punish both over- and under-due numbers.
+    s_gap = sum(gap_score[n] for n in t) / 6
+
+    # ── C. Decade distribution (15%) ──────────────────────────────────
+    # Perfect = 1 number from each of the 5 decades (or near-even spread).
+    # Score = unique decades covered / 5, then bonus if well spread.
+    decades_hit = len({decade_map[n] for n in t})
+    # Count per decade
+    dec_counts = Counter(decade_map[n] for n in t)
+    # Variance penalty: low variance across decades = better distribution
+    counts = list(dec_counts.values())
+    # Pad with zeros for empty decades so variance reflects empty ones
+    for d in range(5):
+        if d not in dec_counts:
+            counts.append(0)
+    variance = float(np.var(counts))
+    max_variance = float(np.var([6, 0, 0, 0, 0]))  # worst case
+    s_decade = (decades_hit / 5) * (1.0 - variance / max_variance)
+
+    # ── D. Odd/Even balance (10%) ─────────────────────────────────────
+    # Ideal: 3 odd + 3 even. Score peaks at 3/3, falls symmetrically.
+    odds = sum(1 for n in t if n % 2 != 0)
+    # Distance from ideal (3): 0→1.0, 1→0.83, 2→0.5, 3→0.0
+    s_odd = 1.0 - abs(odds - 3) / 3
+
+    # ── E. Pair/triple avoidance (10%) ────────────────────────────────
+    # Average penalty across all C(6,2)=15 pairs in the ticket.
+    ticket_pairs = list(combinations(t, 2))
+    avg_pair_penalty = sum(pair_penalty.get(p, 0.0) for p in ticket_pairs) / len(ticket_pairs)
+    s_pair = 1.0 - avg_pair_penalty  # invert: low penalty = high score
+
+    total = (
+        W_SPLIT  * s_split +
+        W_GAP    * s_gap   +
+        W_DECADE * s_decade +
+        W_ODD    * s_odd   +
+        W_PAIR   * s_pair
+    ) * 100  # → 0–100
+
+    components = {
+        "Split avoidance": round(s_split   * 100, 1),
+        "Gap balance":     round(s_gap     * 100, 1),
+        "Decade spread":   round(s_decade  * 100, 1),
+        "Odd/Even":        round(s_odd     * 100, 1),
+        "Pair avoidance":  round(s_pair    * 100, 1),
+        "Total":           round(total, 2),
+    }
+    return total, components
+
+
+def generate_scored_tickets(
+    pool: list[int],
+    tables: dict,
+    excluded: set,
+    recent_set: set,
+    sum_min: int, sum_max: int,
+    above31_min: int,
+    no_consec: bool,
+    no_arith: bool,
+    odd_min: int, odd_max: int,
+    n_candidates: int = CANDIDATES,
+    top_n: int = TOP_N,
+) -> list[tuple[float, list[int], dict]]:
+    """
+    Sample n_candidates random tickets from pool, apply hard filters,
+    score the survivors, return the top_n by total score.
+
+    Returns list of (score, ticket, components) sorted descending.
+    """
+    p = [n for n in pool if n not in excluded and n not in recent_set]
+    if len(p) < 6:
+        p = [n for n in range(1, 50) if n not in excluded]
+    if len(p) < 6:
+        p = list(range(1, 50))
+
+    scored: list[tuple[float, list[int], dict]] = []
+    seen_tickets: set[tuple] = set()
+
+    for _ in range(n_candidates):
+        t = sorted(random.sample(p, 6))
+        key = tuple(t)
+        if key in seen_tickets:
+            continue
+        seen_tickets.add(key)
+
+        if not passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
+            continue
+
+        score, components = score_ticket(t, tables)
+        scored.append((score, t, components))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[:top_n]
+
+
 def gen_ticket(pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=8000):
+    """Legacy fast generator used by non-scored strategies."""
     p = [int(n) for n in pool if 1 <= n <= 49]
     if len(p) < 6: p = list(range(1, 50))
     for _ in range(tries):
@@ -293,37 +447,6 @@ def gen_ticket(pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min
         if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
             return t
     return sorted(random.sample(p, 6))
-
-def decade_spread_ticket(excluded, recent, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=15000):
-    for attempt in range(2):
-        skip = (excluded | recent) if attempt == 0 else excluded
-        d1 = [n for n in range(1, 10)  if n not in skip]
-        d2 = [n for n in range(10, 20) if n not in skip]
-        d3 = [n for n in range(20, 30) if n not in skip]
-        hi = [n for n in range(30, 50) if n not in skip]
-        for _ in range(tries):
-            if not d1 or not d2 or not d3 or len(hi) < 3: break
-            t = sorted([random.choice(d1), random.choice(d2), random.choice(d3)] + random.sample(hi, 3))
-            if len(set(t)) < 6: continue
-            if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
-                return t
-    return None
-
-def delta_ticket(delta_dist, excluded, recent, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=8000):
-    skip = excluded | recent
-    top_deltas = [d for d, _ in delta_dist.most_common(15)] or list(range(1, 10))
-    pool = [n for n in range(1, 50) if n not in skip]
-    for _ in range(tries):
-        start = random.randint(1, 15)
-        seq = [start]
-        for _ in range(5):
-            seq.append(seq[-1] + random.choice(top_deltas))
-        seq = [n for n in seq if 1 <= n <= 49 and n not in skip]
-        if len(set(seq)) == 6:
-            t = sorted(seq)
-            if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
-                return t
-    return gen_ticket(pool or list(range(1, 50)), sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
 
 
 # ──────────────────────────────────────────────
@@ -340,7 +463,7 @@ if st.sidebar.button("🔄 Refresh live data", type="primary"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Generator rules")
+st.sidebar.subheader("Hard filters")
 sum_min     = st.sidebar.slider("Min sum", 60, 180, 115)
 sum_max     = st.sidebar.slider("Max sum", 120, 250, 185)
 above31_min = st.sidebar.slider("Min numbers above 31", 0, 6, 3,
@@ -349,7 +472,35 @@ odd_min, odd_max = st.sidebar.select_slider(
     "Odd count range", options=list(range(7)), value=(2, 4))
 no_consec = st.sidebar.checkbox("No consecutive numbers", value=True)
 no_arith  = st.sidebar.checkbox("No arithmetic sequences", value=True)
-n_tickets = st.sidebar.slider("Tickets to generate", 1, 10, 4)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Scoring weights")
+st.sidebar.caption("Must total 100%. Adjust to emphasise what matters most to you.")
+w_split  = st.sidebar.slider("Split avoidance %",  0, 100, 40)
+w_gap    = st.sidebar.slider("Gap balance %",       0, 100, 25)
+w_decade = st.sidebar.slider("Decade distribution %", 0, 100, 15)
+w_odd    = st.sidebar.slider("Odd/even balance %",  0, 100, 10)
+w_pair   = st.sidebar.slider("Pair avoidance %",    0, 100, 10)
+weight_total = w_split + w_gap + w_decade + w_odd + w_pair
+if weight_total != 100:
+    st.sidebar.warning(f"Weights sum to {weight_total}% — must equal 100%")
+else:
+    # Update module-level weights live
+    W_SPLIT  = w_split  / 100
+    W_GAP    = w_gap    / 100
+    W_DECADE = w_decade / 100
+    W_ODD    = w_odd    / 100
+    W_PAIR   = w_pair   / 100
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Generator options")
+n_tickets = st.sidebar.slider("Top N tickets to show", 1, 10, 5)
+n_candidates_k = st.sidebar.select_slider(
+    "Candidates to evaluate",
+    options=[10_000, 25_000, 50_000, 100_000, 200_000],
+    value=100_000,
+    help="More candidates = better top-10, but slower (~1–3s per 100k on Streamlit Cloud)"
+)
 
 excl_str = st.sidebar.text_input("Exclude numbers (comma-separated)", "")
 excluded = {int(x.strip()) for x in excl_str.split(",")
@@ -401,22 +552,22 @@ with col_b:
     st.info(f"Next draw: **{next_draw}**")
 st.markdown("---")
 
-# ── Build pools ───────────────────────────────
+# ── Build analytics ───────────────────────────
 recent_set = set()
 if exclude_recent:
     for _, row in df.tail(n_recent_exclude).iterrows():
         recent_set.update(int(row[c]) for c in NUMBER_COLS)
 
-freq      = frequency_table(df)
-gaps_df   = gap_table(df)
-hot6      = [n for n, _ in freq.most_common(6)]
-cold6     = [n for n, _ in freq.most_common()[:-7:-1]]
-over15    = gaps_df.head(15)["Number"].tolist()
+freq    = frequency_table(df)
+gaps_df = gap_table(df)
+hot6    = [n for n, _ in freq.most_common(6)]
+cold6   = [n for n, _ in freq.most_common()[:-7:-1]]
+
 full_pool  = [n for n in range(1, 50) if n not in excluded]
 fresh_pool = [n for n in range(1, 50) if n not in excluded and n not in recent_set]
-hot_pool   = [n for n, _ in freq.most_common(20) if n not in excluded and n not in recent_set]
-cold_pool  = [n for n, _ in freq.most_common()[:-21:-1] if n not in excluded and n not in recent_set]
-over_pool  = [n for n in over15 if n not in excluded and n not in recent_set]
+
+# Build scoring tables once (cheap, reused across all tabs)
+tables = build_scoring_tables(df, freq, gaps_df)
 
 delta_dist = Counter()
 for _, row in df.iterrows():
@@ -433,72 +584,160 @@ tab_gen, tab_lucky, tab_freq_t, tab_gaps_t, tab_dec, tab_pairs, tab_check, tab_h
     "⏳ Gaps", "🔢 Decades", "🤝 Pairs", "🔍 Check combo", "📋 History"
 ])
 
+
 # ── GENERATE ──────────────────────────────────
 with tab_gen:
-    st.subheader("Ticket generator")
+    st.subheader("Scored ticket generator")
+
+    if weight_total != 100:
+        st.error(f"⚠️ Sidebar weights sum to {weight_total}% — fix them to 100% before generating.")
+        st.stop()
+
     if exclude_recent and recent_set:
         st.info(f"Auto-excluding (last {n_recent_exclude} draw{'s' if n_recent_exclude > 1 else ''}): `{sorted(recent_set)}`")
 
-    gen_mode   = st.selectbox("Strategy", [
-        "Decade spread — recommended", "Filtered random",
-        "Hot numbers biased", "Cold numbers biased",
-        "Overdue numbers biased", "Delta system",
-        "Gut pick (unpopular territory)",
-    ])
-    show_lucky = st.checkbox("Include my lucky combo as Draw 1", value=True)
+    st.markdown(
+        f"Evaluates **{n_candidates_k:,} random candidates**, scores each on 5 dimensions, "
+        f"returns the **top {n_tickets}** highest-scoring tickets. "
+        "All odds remain 1 in 13,983,816 — this optimises *which tickets you'd prefer to hold*."
+    )
 
-    if st.button("🎲 Generate tickets", type="primary"):
-        lucky = []
+    # Weight breakdown display
+    weight_cols = st.columns(5)
+    labels = ["Split avoid", "Gap balance", "Decade spread", "Odd/Even", "Pair avoid"]
+    pcts   = [w_split, w_gap, w_decade, w_odd, w_pair]
+    for col, lbl, pct in zip(weight_cols, labels, pcts):
+        col.metric(lbl, f"{pct}%")
+
+    show_lucky = st.checkbox("Score & show my lucky combo first", value=True)
+
+    if st.button("🎲 Run scorer", type="primary"):
+        with st.spinner(f"Scoring {n_candidates_k:,} candidates…"):
+            top_tickets = generate_scored_tickets(
+                pool=fresh_pool or full_pool,
+                tables=tables,
+                excluded=excluded,
+                recent_set=recent_set,
+                sum_min=sum_min, sum_max=sum_max,
+                above31_min=above31_min,
+                no_consec=no_consec, no_arith=no_arith,
+                odd_min=odd_min, odd_max=odd_max,
+                n_candidates=n_candidates_k,
+                top_n=n_tickets,
+            )
+
+        if not top_tickets:
+            st.error("No tickets passed the hard filters with this pool. Try relaxing the filters in the sidebar.")
+            st.stop()
+
+        draw_num = 1
+
+        # ── Lucky combo audit ──────────────────────────────────────────
         if show_lucky and lucky_str.strip():
             try:
                 lucky = sorted(int(x.strip()) for x in lucky_str.split(",") if x.strip().isdigit())
-                if len(lucky) != 6: lucky = []
-            except Exception: lucky = []
+                if len(lucky) == 6:
+                    lucky_score, lucky_comp = score_ticket(lucky, tables)
+                    in_rec = [n for n in lucky if n in recent_set]
+                    st.markdown("---")
+                    st.markdown(f"### 🩷 Your lucky combo — Score: **{lucky_score:.1f} / 100**")
+                    _render_ticket_card(lucky, lucky_score, lucky_comp, recent_set, draw_num, is_lucky=True)
+                    draw_num += 1
+            except Exception:
+                pass
 
-        tickets = []
-        for _ in range(n_tickets):
-            if gen_mode == "Decade spread — recommended":
-                t = decade_spread_ticket(excluded, recent_set, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            elif gen_mode == "Filtered random":
-                t = gen_ticket(fresh_pool or full_pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            elif gen_mode == "Hot numbers biased":
-                t = gen_ticket(hot_pool or full_pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            elif gen_mode == "Cold numbers biased":
-                t = gen_ticket(cold_pool or full_pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            elif gen_mode == "Overdue numbers biased":
-                t = gen_ticket((over_pool + full_pool) or full_pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            elif gen_mode == "Delta system":
-                t = delta_ticket(delta_dist, excluded, recent_set, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            else:
-                gut = [n for n in [2, 4, 5, 6, 7, 8, 13, 14, 15, 19, 23, 26, 27, 29, 32, 33, 35, 37, 39, 42, 43, 44, 47, 48]
-                       if n not in excluded and n not in recent_set]
-                t = gen_ticket(gut or fresh_pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
-            if t: tickets.append(t)
+        # ── Top scored tickets ─────────────────────────────────────────
+        st.markdown("---")
+        st.markdown(f"### 🏆 Top {len(top_tickets)} tickets from {n_candidates_k:,} candidates")
 
-        draw_num = 1
-        if lucky:
-            s = sum(lucky); above = sum(1 for n in lucky if n > 31); odds = sum(1 for n in lucky if n % 2 != 0)
-            in_rec = [n for n in lucky if n in recent_set]
-            st.markdown("---")
-            st.markdown(f"**🩷 Draw {draw_num} — Lucky combo:** `{lucky}`")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Sum", s, delta="OK ✓" if 115 <= s <= 185 else "⚠️ Low")
-            c2.metric("Above 31", f"{above}/6", delta="OK ✓" if above >= 3 else "⚠️ Low")
-            c3.metric("Odd/Even", f"{odds}/{6 - odds}")
-            c4.metric("Split risk", split_risk(lucky).split()[0])
-            if in_rec: st.warning(f"⚠️ {in_rec} appeared in the last draw(s)")
+        for rank, (score, ticket, components) in enumerate(top_tickets, 1):
+            _render_ticket_card(ticket, score, components, recent_set, draw_num, rank=rank)
             draw_num += 1
 
-        for t in tickets:
-            s = sum(t); above = sum(1 for n in t if n > 31); odds = sum(1 for n in t if n % 2 != 0)
-            in_rec = [n for n in t if n in recent_set]
-            st.markdown("---")
-            st.markdown(f"**Draw {draw_num}:** `{t}`")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Sum", s); c2.metric("Above 31", f"{above}/6")
-            c3.metric("Odd/Even", f"{odds}/{6 - odds}"); c4.metric("Split risk", split_risk(t).split()[0])
-            if in_rec: st.warning(f"⚠️ {in_rec} appeared in last draw(s) — consider regenerating")
-            draw_num += 1
+        # ── Score distribution chart ───────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### Score distribution across all passing candidates")
+        st.caption("The top tickets sit in the right tail of this distribution.")
+        # Re-sample a small batch just for the chart (fast)
+        with st.spinner("Sampling score distribution…"):
+            sample_scored = generate_scored_tickets(
+                pool=fresh_pool or full_pool,
+                tables=tables,
+                excluded=excluded,
+                recent_set=recent_set,
+                sum_min=sum_min, sum_max=sum_max,
+                above31_min=above31_min,
+                no_consec=no_consec, no_arith=no_arith,
+                odd_min=odd_min, odd_max=odd_max,
+                n_candidates=min(n_candidates_k, 10_000),
+                top_n=min(n_candidates_k, 10_000),
+            )
+        if sample_scored:
+            all_scores = [s for s, _, _ in sample_scored]
+            fig_dist = px.histogram(
+                x=all_scores, nbins=40,
+                labels={"x": "Score", "y": "Count"},
+                title=f"Score distribution (sample of {len(all_scores):,} passing tickets)",
+                color_discrete_sequence=["#4C78A8"],
+            )
+            # Highlight top-N threshold
+            if top_tickets:
+                min_top = min(s for s, _, _ in top_tickets)
+                fig_dist.add_vline(
+                    x=min_top, line_dash="dash", line_color="orange",
+                    annotation_text=f"Top {n_tickets} cutoff ({min_top:.1f})",
+                    annotation_position="top right",
+                )
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+
+def _render_ticket_card(ticket, score, components, recent_set, draw_num, rank=None, is_lucky=False):
+    """Render a single ticket card with score breakdown."""
+    in_rec = [n for n in ticket if n in recent_set]
+    above  = sum(1 for n in ticket if n > 31)
+    odds   = sum(1 for n in ticket if n % 2 != 0)
+    s      = sum(ticket)
+
+    label = f"🩷 Draw {draw_num} — Lucky combo" if is_lucky else f"#{rank} — Draw {draw_num}"
+    balls = "  ".join([f"`{n}`" for n in sorted(ticket)])
+    st.markdown(f"**{label}:** {balls}  — **Score: {score:.1f}/100**")
+
+    # Score radar / bar
+    comp_labels = list(components.keys())[:-1]  # exclude Total
+    comp_values = [components[k] for k in comp_labels]
+
+    c_balls, c_chart = st.columns([2, 3])
+
+    with c_balls:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Sum", s)
+        m2.metric("Above 31", f"{above}/6")
+        m3.metric("Odd/Even", f"{odds}/{6 - odds}")
+        m4, m5 = st.columns(2)
+        m4.metric("Split risk", split_risk(ticket).split()[0])
+        m5.metric("Score", f"{score:.1f}/100")
+        if in_rec:
+            st.warning(f"⚠️ {in_rec} in last draw(s)")
+
+    with c_chart:
+        fig = go.Figure(go.Bar(
+            x=comp_values,
+            y=comp_labels,
+            orientation="h",
+            marker_color=["#4C78A8", "#54A24B", "#E45756", "#F58518", "#72B7B2"],
+            text=[f"{v:.0f}" for v in comp_values],
+            textposition="outside",
+        ))
+        fig.update_layout(
+            xaxis=dict(range=[0, 105], title="Component score (0–100)"),
+            height=180,
+            margin=dict(l=0, r=30, t=10, b=10),
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"bar_{draw_num}_{score:.2f}")
+
+    st.markdown("")  # spacer
+
 
 # ── LUCKY COMBO ───────────────────────────────
 with tab_lucky:
@@ -506,26 +745,64 @@ with tab_lucky:
     try:
         lucky = sorted(int(x.strip()) for x in lucky_str.split(",") if x.strip().isdigit())
         if len(lucky) == 6:
+            lucky_score, lucky_comp = score_ticket(lucky, tables)
             s = sum(lucky); above = sum(1 for n in lucky if n > 31); odds = sum(1 for n in lucky if n % 2 != 0)
             in_rec = [n for n in lucky if n in recent_set]
-            c1, c2, c3, c4 = st.columns(4)
+
+            st.markdown(f"### Overall score: **{lucky_score:.1f} / 100**")
+
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Sum", s, delta="OK ✓" if 115 <= s <= 185 else "⚠️ Out of range")
             c2.metric("Above 31", f"{above}/6", delta="OK ✓" if above >= 3 else "⚠️ Too low")
             c3.metric("Odd/Even", f"{odds}/{6 - odds}")
             c4.metric("Consecutive?", "Yes ⚠️" if has_consec(lucky) else "No ✓")
-            st.write(f"**Split risk:** {split_risk(lucky)}")
+            c5.metric("Split risk", split_risk(lucky).split()[0])
+
             if in_rec: st.warning(f"⚠️ {in_rec} appeared in the last {n_recent_exclude} draw(s).")
+
+            # Score breakdown bar
+            comp_labels = list(lucky_comp.keys())[:-1]
+            comp_values = [lucky_comp[k] for k in comp_labels]
+            weights_pct  = [w_split, w_gap, w_decade, w_odd, w_pair]
+            contrib      = [v * w / 100 for v, w in zip(comp_values, weights_pct)]
+
+            fig_lucky = go.Figure()
+            fig_lucky.add_trace(go.Bar(
+                name="Component score",
+                x=comp_labels, y=comp_values,
+                marker_color="#4C78A8",
+                text=[f"{v:.0f}" for v in comp_values],
+                textposition="outside",
+            ))
+            fig_lucky.add_trace(go.Bar(
+                name="Weighted contribution",
+                x=comp_labels, y=[c * 100 / (w/100) * (w/100) for c, w in zip(contrib, weights_pct)],
+                marker_color="#F58518",
+                opacity=0.5,
+            ))
+            fig_lucky.update_layout(
+                barmode="overlay",
+                yaxis=dict(range=[0, 115], title="Score (0–100)"),
+                height=300,
+                margin=dict(t=10),
+                legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_lucky, use_container_width=True)
+
             ctx = pd.DataFrame({
                 "Number": lucky,
                 "All-time frequency": [freq.get(n, 0) for n in lucky],
                 "Draws since last seen": [int(gaps_df.set_index("Number").loc[n, "Gap"]) for n in lucky],
                 "Popularity score": [popularity_score(n) for n in lucky],
+                "Split score": [round(tables["split_score"][n] * 100, 1) for n in lucky],
+                "Gap score": [round(tables["gap_score"][n] * 100, 1) for n in lucky],
                 "Above 31": ["Yes" if n > 31 else "No" for n in lucky],
                 "In recent draw?": ["🔴 Yes" if n in recent_set else "No" for n in lucky],
             })
             st.dataframe(ctx, use_container_width=True)
-            if s < 115: st.error(f"Sum {s} is well below the 115–185 historical range.")
-            if above == 0: st.error("Zero numbers above 31 — entirely birthday territory. Very high split risk.")
+
+            if s < 115: st.error(f"Sum {s} is below the 115–185 historical range.")
+            if above == 0: st.error("Zero numbers above 31 — very high split risk.")
             if has_consec(lucky): st.warning("Contains consecutive numbers.")
     except Exception as e:
         st.warning(f"Could not parse lucky numbers: {e}")
@@ -538,7 +815,8 @@ with tab_freq_t:
                  color_continuous_scale="Blues", title="All-time frequency per number")
     st.plotly_chart(fig, use_container_width=True)
     c1, c2 = st.columns(2)
-    c1.metric("🔥 Top 6 hot", str(hot6)); c2.metric("❄️ Bottom 6 cold", str(cold6))
+    c1.metric("🔥 Top 6 hot", str(hot6))
+    c2.metric("❄️ Bottom 6 cold", str(cold6))
 
 # ── GAPS ──────────────────────────────────────
 with tab_gaps_t:
@@ -564,7 +842,8 @@ with tab_pairs:
     st.subheader("Most common pairs")
     p_df = pair_freq(df)
     fig4 = px.bar(p_df, x="Count", y="Pair", orientation="h",
-                  color="Count", color_continuous_scale="Viridis", title="Top 25 most co-occurring pairs")
+                  color="Count", color_continuous_scale="Viridis",
+                  title="Top 25 most co-occurring pairs")
     fig4.update_layout(yaxis={"categoryorder": "total ascending"}, height=600)
     st.plotly_chart(fig4, use_container_width=True)
 
@@ -578,12 +857,20 @@ with tab_check:
             if len(check) != 6:
                 st.warning("Enter exactly 6 numbers.")
             else:
-                past = [tuple(sorted(int(row[c]) for c in NUMBER_COLS)) for _, row in df.iterrows()]
+                past  = [tuple(sorted(int(row[c]) for c in NUMBER_COLS)) for _, row in df.iterrows()]
                 count = past.count(check)
                 if count > 0:
                     st.success(f"✅ Appeared {count} time(s) in {len(df)} draws.")
                 else:
                     st.info(f"❌ Never appeared in {len(df)} draws analyzed.")
+                # Also score this combo
+                score, components = score_ticket(list(check), tables)
+                st.markdown(f"**Score if you played this:** {score:.1f} / 100")
+                comp_df = pd.DataFrame([
+                    {"Dimension": k, "Score": v}
+                    for k, v in components.items() if k != "Total"
+                ])
+                st.dataframe(comp_df, use_container_width=True)
         except Exception:
             st.warning("Invalid input.")
 
