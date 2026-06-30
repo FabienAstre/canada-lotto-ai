@@ -513,6 +513,7 @@ st.sidebar.subheader("Scoring weights")
 
 # ── Presets ────────────────────────────────────────────────────────────
 PRESETS = {
+    "✏️ Custom":           None,
     "🛡️ Split Avoider":    (60, 15, 10,  5, 10),
     "⚖️ Balanced":         (40, 25, 15, 10, 10),
     "📊 Statistician":     (20, 40, 20, 10, 10),
@@ -524,26 +525,29 @@ PRESETS = {
 
 st.sidebar.caption("Pick a preset to auto-fill weights, then fine-tune with the sliders.")
 
-# Radio — no selection = Custom (sliders untouched)
-preset_names = ["✏️ Custom"] + list(PRESETS.keys())
 chosen_preset = st.sidebar.radio(
     "Strategy preset",
-    preset_names,
-    index=1,          # default = Balanced
+    list(PRESETS.keys()),
+    index=2,   # default = Balanced
     label_visibility="collapsed",
 )
 
-if chosen_preset == "✏️ Custom":
-    default_split, default_gap, default_decade, default_odd, default_pair = 40, 25, 15, 10, 10
-else:
-    default_split, default_gap, default_decade, default_odd, default_pair = PRESETS[chosen_preset]
+# When preset changes, write values directly into session_state keys
+# so the sliders below pick them up immediately on this same render.
+if PRESETS[chosen_preset] is not None:
+    vs, vg, vd, vo, vp = PRESETS[chosen_preset]
+    st.session_state["w_split"]  = vs
+    st.session_state["w_gap"]    = vg
+    st.session_state["w_decade"] = vd
+    st.session_state["w_odd"]    = vo
+    st.session_state["w_pair"]   = vp
 
 st.sidebar.caption("Fine-tune below (must total 100%):")
-w_split  = st.sidebar.slider("↳ Split avoidance %",     0, 100, default_split,  key="w_split")
-w_gap    = st.sidebar.slider("↳ Gap balance %",          0, 100, default_gap,    key="w_gap")
-w_decade = st.sidebar.slider("↳ Decade distribution %",  0, 100, default_decade, key="w_decade")
-w_odd    = st.sidebar.slider("↳ Odd/even balance %",     0, 100, default_odd,    key="w_odd")
-w_pair   = st.sidebar.slider("↳ Pair avoidance %",       0, 100, default_pair,   key="w_pair")
+w_split  = st.sidebar.slider("↳ Split avoidance %",     0, 100, 40, key="w_split")
+w_gap    = st.sidebar.slider("↳ Gap balance %",          0, 100, 25, key="w_gap")
+w_decade = st.sidebar.slider("↳ Decade distribution %",  0, 100, 15, key="w_decade")
+w_odd    = st.sidebar.slider("↳ Odd/even balance %",     0, 100, 10, key="w_odd")
+w_pair   = st.sidebar.slider("↳ Pair avoidance %",       0, 100, 10, key="w_pair")
 
 weight_total = w_split + w_gap + w_decade + w_odd + w_pair
 if weight_total != 100:
