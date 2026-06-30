@@ -439,7 +439,7 @@ def generate_scored_tickets(
 
 
 def gen_ticket(pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=8000):
-    """Legacy fast generator used by non-scored strategies."""
+    """Fast random generator — used by strategy modes as the candidate source."""
     p = [int(n) for n in pool if 1 <= n <= 49]
     if len(p) < 6: p = list(range(1, 50))
     for _ in range(tries):
@@ -447,6 +447,41 @@ def gen_ticket(pool, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min
         if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
             return t
     return sorted(random.sample(p, 6))
+
+
+def decade_spread_ticket(excluded, recent, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=15000):
+    """Generate one ticket guaranteed to span at least 4 decades."""
+    for attempt in range(2):
+        skip = (excluded | recent) if attempt == 0 else excluded
+        d1 = [n for n in range(1, 10)  if n not in skip]
+        d2 = [n for n in range(10, 20) if n not in skip]
+        d3 = [n for n in range(20, 30) if n not in skip]
+        hi = [n for n in range(30, 50) if n not in skip]
+        for _ in range(tries):
+            if not d1 or not d2 or not d3 or len(hi) < 3: break
+            t = sorted([random.choice(d1), random.choice(d2), random.choice(d3)] + random.sample(hi, 3))
+            if len(set(t)) < 6: continue
+            if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
+                return t
+    return None
+
+
+def delta_ticket(delta_dist, excluded, recent, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max, tries=8000):
+    """Generate one ticket using the delta (gap between consecutive numbers) system."""
+    skip = excluded | recent
+    top_deltas = [d for d, _ in delta_dist.most_common(15)] or list(range(1, 10))
+    pool = [n for n in range(1, 50) if n not in skip]
+    for _ in range(tries):
+        start = random.randint(1, 15)
+        seq = [start]
+        for _ in range(5):
+            seq.append(seq[-1] + random.choice(top_deltas))
+        seq = [n for n in seq if 1 <= n <= 49 and n not in skip]
+        if len(set(seq)) == 6:
+            t = sorted(seq)
+            if passes(t, sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max):
+                return t
+    return gen_ticket(pool or list(range(1, 50)), sum_min, sum_max, above31_min, no_consec, no_arith, odd_min, odd_max)
 
 
 # ──────────────────────────────────────────────
@@ -565,6 +600,12 @@ cold6   = [n for n, _ in freq.most_common()[:-7:-1]]
 
 full_pool  = [n for n in range(1, 50) if n not in excluded]
 fresh_pool = [n for n in range(1, 50) if n not in excluded and n not in recent_set]
+hot_pool   = [n for n, _ in freq.most_common(20) if n not in excluded and n not in recent_set]
+cold_pool  = [n for n, _ in freq.most_common()[:-21:-1] if n not in excluded and n not in recent_set]
+over15     = gaps_df.head(15)["Number"].tolist()
+over_pool  = [n for n in over15 if n not in excluded and n not in recent_set]
+gut_pool   = [n for n in [2,4,5,6,7,8,13,14,15,19,23,26,27,29,32,33,35,37,39,42,43,44,47,48]
+              if n not in excluded and n not in recent_set]
 
 # Build scoring tables once (cheap, reused across all tabs)
 tables = build_scoring_tables(df, freq, gaps_df)
@@ -573,6 +614,57 @@ delta_dist = Counter()
 for _, row in df.iterrows():
     s = sorted(row[NUMBER_COLS].tolist())
     delta_dist.update(s[i + 1] - s[i] for i in range(5))
+
+
+# ──────────────────────────────────────────────
+# TICKET CARD RENDERER  (must be defined before the tab block that calls it)
+# ──────────────────────────────────────────────
+
+def _render_ticket_card(ticket, score, components, recent_set, draw_num, rank=None, is_lucky=False):
+    """Render a single ticket card with score breakdown bar chart."""
+    in_rec = [n for n in ticket if n in recent_set]
+    above  = sum(1 for n in ticket if n > 31)
+    odds   = sum(1 for n in ticket if n % 2 != 0)
+    s      = sum(ticket)
+
+    label = f"🩷 Draw {draw_num} — Lucky combo" if is_lucky else f"#{rank} — Draw {draw_num}"
+    balls = "  ".join([f"`{n}`" for n in sorted(ticket)])
+    st.markdown(f"**{label}:** {balls}  — **Score: {score:.1f}/100**")
+
+    comp_labels = list(components.keys())[:-1]  # exclude Total
+    comp_values = [components[k] for k in comp_labels]
+
+    c_balls, c_chart = st.columns([2, 3])
+
+    with c_balls:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Sum", s)
+        m2.metric("Above 31", f"{above}/6")
+        m3.metric("Odd/Even", f"{odds}/{6 - odds}")
+        m4, m5 = st.columns(2)
+        m4.metric("Split risk", split_risk(ticket).split()[0])
+        m5.metric("Score", f"{score:.1f}/100")
+        if in_rec:
+            st.warning(f"⚠️ {in_rec} in last draw(s)")
+
+    with c_chart:
+        fig = go.Figure(go.Bar(
+            x=comp_values,
+            y=comp_labels,
+            orientation="h",
+            marker_color=["#4C78A8", "#54A24B", "#E45756", "#F58518", "#72B7B2"],
+            text=[f"{v:.0f}" for v in comp_values],
+            textposition="outside",
+        ))
+        fig.update_layout(
+            xaxis=dict(range=[0, 115], title="Component score (0–100)"),
+            height=180,
+            margin=dict(l=0, r=30, t=10, b=10),
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"bar_{draw_num}_{score:.2f}")
+
+    st.markdown("")  # spacer
 
 
 # ──────────────────────────────────────────────
@@ -587,7 +679,7 @@ tab_gen, tab_lucky, tab_freq_t, tab_gaps_t, tab_dec, tab_pairs, tab_check, tab_h
 
 # ── GENERATE ──────────────────────────────────
 with tab_gen:
-    st.subheader("Scored ticket generator")
+    st.subheader("Ticket generator")
 
     if weight_total != 100:
         st.error(f"⚠️ Sidebar weights sum to {weight_total}% — fix them to 100% before generating.")
@@ -596,25 +688,88 @@ with tab_gen:
     if exclude_recent and recent_set:
         st.info(f"Auto-excluding (last {n_recent_exclude} draw{'s' if n_recent_exclude > 1 else ''}): `{sorted(recent_set)}`")
 
-    st.markdown(
-        f"Evaluates **{n_candidates_k:,} random candidates**, scores each on 5 dimensions, "
-        f"returns the **top {n_tickets}** highest-scoring tickets. "
-        "All odds remain 1 in 13,983,816 — this optimises *which tickets you'd prefer to hold*."
+    # ── Mode selector ──────────────────────────────────────────────────
+    gen_mode = st.selectbox(
+        "Candidate pool strategy",
+        [
+            "🎯 Full pool (all numbers)",
+            "📅 Decade spread",
+            "🔥 Hot numbers biased",
+            "❄️ Cold numbers biased",
+            "⏳ Overdue numbers biased",
+            "📐 Delta system",
+            "🤫 Gut pick (unpopular territory)",
+        ],
+        help=(
+            "Defines which numbers are sampled as candidates. "
+            "The scorer then ranks all candidates that pass the hard filters. "
+            "Decade spread and Delta pre-seed the pool with structural diversity."
+        ),
     )
 
-    # Weight breakdown display
+    st.markdown(
+        f"Samples **{n_candidates_k:,} candidates** from the selected pool, "
+        f"scores each on 5 dimensions, returns the **top {n_tickets}** tickets."
+    )
+
+    # Active weights display
     weight_cols = st.columns(5)
-    labels = ["Split avoid", "Gap balance", "Decade spread", "Odd/Even", "Pair avoid"]
-    pcts   = [w_split, w_gap, w_decade, w_odd, w_pair]
-    for col, lbl, pct in zip(weight_cols, labels, pcts):
+    wlabels = ["Split avoid", "Gap balance", "Decade spread", "Odd/Even", "Pair avoid"]
+    wpcts   = [w_split, w_gap, w_decade, w_odd, w_pair]
+    for col, lbl, pct in zip(weight_cols, wlabels, wpcts):
         col.metric(lbl, f"{pct}%")
 
     show_lucky = st.checkbox("Score & show my lucky combo first", value=True)
 
     if st.button("🎲 Run scorer", type="primary"):
-        with st.spinner(f"Scoring {n_candidates_k:,} candidates…"):
+
+        # ── Resolve candidate pool from strategy ───────────────────────
+        if "Decade spread" in gen_mode:
+            # Pre-generate a large pool of decade-spread candidates, then score them
+            pre_pool = []
+            for _ in range(n_candidates_k):
+                t = decade_spread_ticket(
+                    excluded, recent_set,
+                    sum_min, sum_max, above31_min,
+                    no_consec, no_arith, odd_min, odd_max,
+                    tries=50,
+                )
+                if t:
+                    pre_pool.extend(t)
+            # Flatten back to a unique number pool weighted by appearance
+            candidate_pool = list(set(pre_pool)) if pre_pool else fresh_pool or full_pool
+
+        elif "Delta" in gen_mode:
+            pre_pool = []
+            for _ in range(n_candidates_k):
+                t = delta_ticket(
+                    delta_dist, excluded, recent_set,
+                    sum_min, sum_max, above31_min,
+                    no_consec, no_arith, odd_min, odd_max,
+                    tries=20,
+                )
+                if t:
+                    pre_pool.extend(t)
+            candidate_pool = list(set(pre_pool)) if pre_pool else fresh_pool or full_pool
+
+        elif "Hot" in gen_mode:
+            candidate_pool = hot_pool or fresh_pool or full_pool
+
+        elif "Cold" in gen_mode:
+            candidate_pool = cold_pool or fresh_pool or full_pool
+
+        elif "Overdue" in gen_mode:
+            candidate_pool = (over_pool + fresh_pool) or full_pool
+
+        elif "Gut" in gen_mode:
+            candidate_pool = gut_pool or fresh_pool or full_pool
+
+        else:  # Full pool
+            candidate_pool = fresh_pool or full_pool
+
+        with st.spinner(f"Scoring {n_candidates_k:,} candidates from {gen_mode.split('(')[0].strip()} pool…"):
             top_tickets = generate_scored_tickets(
-                pool=fresh_pool or full_pool,
+                pool=candidate_pool,
                 tables=tables,
                 excluded=excluded,
                 recent_set=recent_set,
@@ -627,18 +782,17 @@ with tab_gen:
             )
 
         if not top_tickets:
-            st.error("No tickets passed the hard filters with this pool. Try relaxing the filters in the sidebar.")
+            st.error("No tickets passed the hard filters. Try relaxing the sidebar filters or switching strategy.")
             st.stop()
 
         draw_num = 1
 
-        # ── Lucky combo audit ──────────────────────────────────────────
+        # ── Lucky combo ────────────────────────────────────────────────
         if show_lucky and lucky_str.strip():
             try:
                 lucky = sorted(int(x.strip()) for x in lucky_str.split(",") if x.strip().isdigit())
                 if len(lucky) == 6:
                     lucky_score, lucky_comp = score_ticket(lucky, tables)
-                    in_rec = [n for n in lucky if n in recent_set]
                     st.markdown("---")
                     st.markdown(f"### 🩷 Your lucky combo — Score: **{lucky_score:.1f} / 100**")
                     _render_ticket_card(lucky, lucky_score, lucky_comp, recent_set, draw_num, is_lucky=True)
@@ -648,7 +802,7 @@ with tab_gen:
 
         # ── Top scored tickets ─────────────────────────────────────────
         st.markdown("---")
-        st.markdown(f"### 🏆 Top {len(top_tickets)} tickets from {n_candidates_k:,} candidates")
+        st.markdown(f"### 🏆 Top {len(top_tickets)} from {n_candidates_k:,} candidates · {gen_mode.split('(')[0].strip()} pool")
 
         for rank, (score, ticket, components) in enumerate(top_tickets, 1):
             _render_ticket_card(ticket, score, components, recent_set, draw_num, rank=rank)
@@ -657,11 +811,10 @@ with tab_gen:
         # ── Score distribution chart ───────────────────────────────────
         st.markdown("---")
         st.markdown("#### Score distribution across all passing candidates")
-        st.caption("The top tickets sit in the right tail of this distribution.")
-        # Re-sample a small batch just for the chart (fast)
-        with st.spinner("Sampling score distribution…"):
+        st.caption("Top tickets sit in the right tail. The cutoff line shows where top-N begins.")
+        with st.spinner("Sampling distribution…"):
             sample_scored = generate_scored_tickets(
-                pool=fresh_pool or full_pool,
+                pool=candidate_pool,
                 tables=tables,
                 excluded=excluded,
                 recent_set=recent_set,
@@ -677,10 +830,9 @@ with tab_gen:
             fig_dist = px.histogram(
                 x=all_scores, nbins=40,
                 labels={"x": "Score", "y": "Count"},
-                title=f"Score distribution (sample of {len(all_scores):,} passing tickets)",
+                title=f"Score distribution ({len(all_scores):,} passing tickets sampled)",
                 color_discrete_sequence=["#4C78A8"],
             )
-            # Highlight top-N threshold
             if top_tickets:
                 min_top = min(s for s, _, _ in top_tickets)
                 fig_dist.add_vline(
